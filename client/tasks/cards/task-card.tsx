@@ -828,7 +828,7 @@ function TaskCardViewImpl(given: TaskCardViewProps) {
   // The project's colour leads the card: its stripe, and the location in bold.
   const projectColor = location.projectIconColor || (location.projectId || location.projectName ? identityColor(projectViewKey(location, props.hostId)) : null);
   const metaStyle = text(m.metaSize, m.metaLine, muted);
-  const locationStyle: TextStyle = projectColor ? { ...text(m.metaSize + 1, m.metaLine + 1, projectColor), fontWeight: "700" } : metaStyle;
+  const locationStyle: TextStyle = projectColor ? { ...text(m.metaSize + 3, m.metaLine + 4, projectColor), fontWeight: "700" } : { ...text(m.metaSize + 3, m.metaLine + 4, tokens.foreground), fontWeight: "700" };
   const parentLabel = card.parent ? card.parent.title ?? strings.parentUnknown : null;
   // An archived parent, itself or with its workspace, is tagged so beside its link.
   let parentTag: string | null = null;

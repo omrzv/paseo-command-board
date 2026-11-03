@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react";
-import { Animated, PanResponder, Platform, Pressable, ScrollView, View, type GestureResponderEvent, type FlatList as NativeFlatList, type TextInput as NativeTextInput } from "react-native";
+import { Animated, PanResponder, Platform, Pressable, ScrollView, View, useWindowDimensions, type GestureResponderEvent, type FlatList as NativeFlatList, type TextInput as NativeTextInput } from "react-native";
 import { FlatList, Icon, Modal } from "@getpaseo/plugin/client/react-native";
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
@@ -250,9 +250,12 @@ export function DesktopBoard(props: {
     if (!tabletFloating) setFloatingDragWidth(null);
   }, [tabletFloating]);
   const sheetRoom = inSheet ? sheetHeight(boardHeight, detent) : 0;
+  // Untouched (the default width), the sidebar takes the window's right third; a width the person dragged to stays theirs.
+  const windowWidth = useWindowDimensions().width;
+  const preferredWidth = preference.width === SIDEBAR.width ? Math.max(SIDEBAR.width, Math.round(windowWidth / 3)) : preference.width;
   const panelWidth = tabletFloating
     ? tabletSidebarWidth(boardWidth, floatingDragWidth ?? preference.floatingWidth)
-    : sidebarWidth(boardWidth, dragWidth ?? preference.width, floating ? "floating" : "inline");
+    : sidebarWidth(boardWidth, dragWidth ?? preferredWidth, floating ? "floating" : "inline");
   const lanesWidth = Math.max(0, boardWidth - (inline ? panelWidth + SIDEBAR.gap : 0));
   const laneSizing = touch ? "stable" : "fit";
   const laneWidth = boardLaneLayout(boardWidth, laneOrder, collapsed, board.laneWidth, lanesWidth, laneSizing).laneWidth;
@@ -300,7 +303,7 @@ export function DesktopBoard(props: {
     if (selectedGone) dispatch({ type: "clear" });
   }, [selectedGone]);
 
-  const floatWidth = touch ? tabletSidebarWidth(boardWidth, preference.floatingWidth) : sidebarWidth(boardWidth, preference.width, "floating");
+  const floatWidth = touch ? tabletSidebarWidth(boardWidth, preference.floatingWidth) : sidebarWidth(boardWidth, preferredWidth, "floating");
   const latest = useRef({ board, live, emptyLanesSwitch, focus, shapes, menu, selection, floating, open, narrow, preferred: preference.open, toggleSidebar, boardWidth, lanesWidth, inSheet, floatWidth, laneWidth: layout.laneWidth, collapsed });
   latest.current = { board, live, emptyLanesSwitch, focus, shapes, menu, selection, floating, open, narrow, preferred: preference.open, toggleSidebar, boardWidth, lanesWidth, inSheet, floatWidth, laneWidth: layout.laneWidth, collapsed };
   const sheetMode = mode === "sheet";

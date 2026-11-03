@@ -27,6 +27,10 @@ export const slackItemSchema = z.object({
   links: z.array(z.string()),
   state: z.enum(["open", "done", "dismissed"]),
   replied: z.boolean(),
+  /** The thread the message sits in, when it is a thread reply. */
+  threadTs: z.string().optional(),
+  /** A DM or group DM, not a channel. */
+  direct: z.boolean().optional(),
 });
 export type SlackItem = z.output<typeof slackItemSchema>;
 
@@ -77,4 +81,11 @@ export const slackScanRpc = defineRpc({
   name: "slack.scan",
   input: z.object({}),
   output: z.object({ status: slackStatusSchema }),
+});
+
+/** Posts a reply as the person, in the message's thread (or its DM). Needs the chat:write user scope. */
+export const slackReplyRpc = defineRpc({
+  name: "slack.reply",
+  input: z.object({ id: z.string().min(1), text: z.string().min(1).max(8000) }),
+  output: z.object({ ok: z.boolean(), error: z.string().nullable() }),
 });

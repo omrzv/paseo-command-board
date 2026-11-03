@@ -1,3 +1,4 @@
+import type { ReplyImage } from "../cards/detail-cards";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
@@ -107,7 +108,7 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
         unarchive: board.unarchive.available ? board.unarchive : null,
         archive: board.archive,
         markRead: board.read.available ? board.read : null,
-        onReply: (text: string) => board.paseo.agents.ref(card.id).send(text),
+        onReply: (text: string, images: ReplyImage[]) => board.paseo.agents.ref(card.id).send(text, { ...(images.length ? { images } : {}), activeTurnBehavior: "steer" }),
       }
     : null;
 

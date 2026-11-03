@@ -1,3 +1,4 @@
+import { setReducedMotionForTests } from "../../client/ui/use-reduced-motion";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TestRenderer, { act, type ReactTestInstance } from "react-test-renderer";
@@ -4236,10 +4237,9 @@ describe("Tasks board, tablet filters", () => {
     const title = renderer!.root.findAll((node) => (node.type as unknown) === "Text" && node.props.testID === "task-card-title")[0]!;
     const meta = renderer!.root.findAll((node) => (node.type as unknown) === "Text" && node.props.testID === "task-card-meta-location")[0]!;
     const lane = renderer!.root.find((node) => (node.type as unknown) === "Pressable" && node.props.testID === "lane-header-running");
-    // The location reads a step up from the meta row's size, in its project's colour.
-    expect(font(title)).toBe(font(meta) - 1);
+    // The location (project › workspace) leads the card, bold and larger than the title, in its project's colour.
+    expect(font(meta)).toBeGreaterThan(font(title));
     expect(font(lane.findAll((node) => (node.type as unknown) === "Text")[0]!)).toBe(font(title));
-    expect(StyleSheet.flatten(title.props.style).lineHeight).toBeGreaterThan(StyleSheet.flatten(meta.props.style).lineHeight);
   });
 
   it("folds a narrow board's header into one row, its filters, sort and lane width behind one button", () => {
@@ -5002,13 +5002,20 @@ describe("Tasks board, phone", () => {
   });
 
   it("jumps without animation when reduced motion is on", () => {
-    let onReduce: (enabled: boolean) => void = () => {};
+    // Every reduce-motion listener hears the change, whichever registered last.
+    const reduceListeners: Array<(enabled: boolean) => void> = [];
+    const onReduce = (enabled: boolean) => {
+      for (const listener of reduceListeners) listener(enabled);
+      setReducedMotionForTests(enabled);
+    };
     const addListener = AccessibilityInfo.addEventListener;
     const subscription = vi.spyOn(AccessibilityInfo, "addEventListener").mockImplementation(((name: string, listener: (enabled: boolean) => void) => {
-      if (name === "reduceMotionChanged") onReduce = listener;
+      if (name === "reduceMotionChanged") reduceListeners.push(listener);
       return addListener("reduceMotionChanged", listener);
     }) as typeof AccessibilityInfo.addEventListener);
     const spring = vi.spyOn(Animated, "spring");
+    // The first reading agrees with the change below, so a late answer to it cannot undo the switch.
+    const initial = vi.spyOn(AccessibilityInfo, "isReduceMotionEnabled").mockResolvedValue(true);
     try {
       const scrollToOffset = vi.fn();
       const scrollToIndex = vi.fn();
@@ -5028,6 +5035,7 @@ describe("Tasks board, phone", () => {
       act(() => onReduce(false));
       subscription.mockRestore();
       spring.mockRestore();
+      initial.mockRestore();
     }
   });
 

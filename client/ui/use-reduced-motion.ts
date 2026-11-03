@@ -60,3 +60,8 @@ export function getReducedMotion(): boolean {
 export function useReducedMotion(): boolean {
   return useSyncExternalStore(subscribe, read, read);
 }
+
+/** Tests: switch reduced motion as the system's change event would, whether or not the listener is already registered. */
+export function setReducedMotionForTests(next: boolean): void {
+  set(next);
+}

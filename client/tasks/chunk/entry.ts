@@ -32,7 +32,7 @@ export function startTasksData(client: PluginClientContext): () => void {
   // Cards marked read from a board, failures included, and finished turns nobody handled yet: the server keeps both.
   setReadMarksLoader(() => client.rpc(tasksReadsRpc, {}));
   // Short task descriptions and two-sentence summaries the server's model wrote when turns completed.
-  setInsightsLoader((agentIds) => client.rpc(insightsGetRpc, { agentIds }).then((result) => result.insights));
+  setInsightsLoader((agentIds, ensure) => client.rpc(insightsGetRpc, { agentIds, ...(ensure?.length ? { ensure } : {}) }).then((result) => result.insights));
   // Label colors as Paseo's sidebar draws them, for a host whose API lists no label definitions.
   setLabelDefinitionsLoader(() => client.rpc(tasksLabelsRpc, {}).then((result) => result.labels));
   // Project icons as Paseo's sidebar draws them, for a host whose API has no icon call.

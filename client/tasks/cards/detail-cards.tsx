@@ -1,9 +1,10 @@
 import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
-import { Animated, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle, type ViewStyle } from "react-native";
+import { Animated, Image, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle, type ViewStyle } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useRpc } from "@getpaseo/plugin/client";
 import { Icon, ScrollView as SheetScrollView, useToast } from "@getpaseo/plugin/client/react-native";
 import { revealPathRpc } from "../../../shared/file-rpc";
+import { insightsRefreshRpc } from "../../../shared/insights-rpc";
 import { openLink } from "../../components/open-link";
 import { MarkdownView } from "../../components/markdown/markdown-view";
 import { variantMetrics } from "../../components/markdown/render/styles";
@@ -28,6 +29,7 @@ import { formatClockTime, formatDuration, formatRelative, formatTokenTotal, sinc
 import { cardStrings } from "./strings";
 import { taskTokens, type TaskTokens } from "./tokens";
 import { TagMark } from "./tag-mark";
+import { LinkedText } from "./linked-text";
 import { modeIcon, THINKING_ICON } from "./mode-icons";
 import { BrandMark } from "./brand-mark";
 import { SubtaskRow } from "./subtask-row";
@@ -194,7 +196,7 @@ export interface TaskDetailCardsProps extends TimeSource {
   /** Mark read for a card in review, as on its card; absent where this host cannot. */
   markRead?: DetailRead | null;
   /** Sends a message to the agent, as typing in its tab does; absent leaves the reply box out. */
-  onReply?(text: string): Promise<void>;
+  onReply?(text: string, images: ReplyImage[]): Promise<void>;
   /** The sections scroll under the fixed header (the sidebar); else the card grows with them (the sheet). */
   scrollBody?: boolean;
   /**
@@ -400,6 +402,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
             </View>
           </>
         )}
+        {props.onReply && !card.subagent && !card.archived ? <ReplyBox key={card.id} docked onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
         {props.actions !== false ? <View style={{ paddingBottom: 10 }}><DetailActionBar {...props} sidebar contentUnder={underBar} /></View> : null}
       </View>
     );
@@ -482,6 +485,20 @@ function scrollEdgeShadow(isDark: boolean, direction: "down" | "up"): string {
 }
 
 /** `gutter`: the room a scroller's scrollbar takes from the right padding (0 outside one). */
+/** Writes the summary again; the card takes the new one on the board's next read. */
+function InsightRefresh(props: { agentId: string; tokens: TaskTokens; language: TasksLanguage }) {
+  const refresh = useRpc(insightsRefreshRpc);
+  const [refreshing, setRefreshing] = useState(false);
+  const label = props.language === "zh" ? "重新生成摘要" : "Write the summary again";
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} {...tipProps(label)} disabled={refreshing} hitSlop={6}
+      onPress={() => { setRefreshing(true); void refresh({ agentId: props.agentId }).finally(() => setRefreshing(false)); }}
+      style={{ width: 22, height: 22, alignItems: "center", justifyContent: "center", opacity: refreshing ? 0.5 : 1 }}>
+      <Icon name={refreshing ? "Loader" : "RefreshCw"} size={12} color={props.tokens.foregroundMuted} />
+    </Pressable>
+  );
+}
+
 /** The model's two sentences on the task, under the header: what it is, and where it stands. */
 function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics; language: TasksLanguage }) {
   const insight = props.card.insight;
@@ -491,9 +508,10 @@ function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics;
     <View testID="detail-insight" style={{ marginHorizontal: m.padH, marginTop: 2, marginBottom: 8, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: withAlpha(tokens.accent, tokens.isDark ? 0.14 : 0.08), borderLeftWidth: 3, borderLeftColor: tokens.accent }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 3 }}>
         <Icon name="Sparkles" size={12} color={tokens.accentText} />
-        <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.accentText }}>{props.language === "zh" ? "摘要" : "Summary"}</Text>
+        <Text style={{ flex: 1, fontSize: F.sm, fontWeight: "600", color: tokens.accentText }}>{props.language === "zh" ? "摘要" : "Summary"}</Text>
+<InsightRefresh agentId={props.card.id} tokens={tokens} language={props.language} />
       </View>
-      <Text selectable style={{ fontSize: F.sm, lineHeight: Math.round(F.sm * 1.45), color: tokens.foreground }}>{insight.summary}</Text>
+      <LinkedText selectable text={insight.summary} linkColor={tokens.accentText} style={{ fontSize: F.base, lineHeight: Math.round(F.base * 1.45), color: tokens.foreground }} />
       {insight.agentTitle && insight.agentTitle !== props.card.title ? (
         <Text numberOfLines={1} style={{ marginTop: 4, fontSize: F.sm, color: tokens.foregroundMuted }}>{insight.agentTitle}</Text>
       ) : null}
@@ -501,58 +519,125 @@ function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics;
   );
 }
 
-/** A message to the agent from the details: Enter (or the button) sends, Shift+Enter breaks the line on web. */
-function ReplyBox(props: { onReply(text: string): Promise<void>; tokens: TaskTokens; language: TasksLanguage; running: boolean }) {
+/** An image pasted into the reply, as the daemon takes it. */
+export type ReplyImage = { data: string; mimeType: string };
+
+/** The images on a paste event, read as base64. */
+function pastedImages(event: { clipboardData?: { items?: ArrayLike<{ kind: string; type: string; getAsFile(): Blob | null }> } | null }): Promise<ReplyImage[]> {
+  const items = Array.from(event.clipboardData?.items ?? []).filter((item) => item.kind === "file" && item.type.startsWith("image/"));
+  return Promise.all(items.map((item) => new Promise<ReplyImage | null>((resolve) => {
+    const file = item.getAsFile();
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result ?? "");
+      const comma = url.indexOf(",");
+      resolve(comma > 0 ? { data: url.slice(comma + 1), mimeType: item.type } : null);
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  }))).then((images) => images.filter((image): image is ReplyImage => image !== null));
+}
+
+/**
+ * The reply to the agent: a labelled, outlined box. Enter (or the button)
+ * sends, Shift+Enter breaks the line; on web, Ctrl/Cmd+V pastes images as in
+ * the agent's own tab. `docked` is the sidebar's: pinned under the messages.
+ */
+function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<void>; tokens: TaskTokens; language: TasksLanguage; running: boolean; docked?: boolean }) {
   const { tokens } = props;
   const zh = props.language === "zh";
   const toast = useToast();
   const [text, setText] = useState("");
+  const [images, setImages] = useState<ReplyImage[]>([]);
   const [sending, setSending] = useState(false);
-  const [height, setHeight] = useState(36);
+  const [focused, setFocused] = useState(false);
+  const [height, setHeight] = useState(44);
+  const input = useRef<unknown>(null);
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const node = input.current as { addEventListener?(type: string, listener: (event: Event) => void): void; removeEventListener?(type: string, listener: (event: Event) => void): void } | null;
+    if (!node?.addEventListener) return;
+    const onPaste = (event: Event) => {
+      const paste = event as Event & { clipboardData?: { items?: ArrayLike<{ kind: string; type: string; getAsFile(): Blob | null }> } };
+      const hasImage = Array.from(paste.clipboardData?.items ?? []).some((item) => item.kind === "file" && item.type.startsWith("image/"));
+      if (!hasImage) return;
+      event.preventDefault();
+      void pastedImages(paste).then((added) => setImages((current) => [...current, ...added].slice(0, 8)));
+    };
+    node.addEventListener("paste", onPaste);
+    return () => node.removeEventListener?.("paste", onPaste);
+  }, []);
   const send = useCallback(() => {
     const message = text.trim();
-    if (!message || sending) return;
+    if ((!message && images.length === 0) || sending) return;
     setSending(true);
-    props.onReply(message).then(() => {
+    props.onReply(message || (zh ? "（见图片）" : "(see image)"), images).then(() => {
       setText("");
-      setHeight(36);
-      toast.show?.(zh ? "已发送" : "Sent");
+      setImages([]);
+      setHeight(44);
+      toast.show?.(zh ? "已发送" : "Sent to the agent");
     }, (error: unknown) => {
       toast.error(zh ? `发送失败：${error instanceof Error ? error.message : String(error)}` : `Could not send: ${error instanceof Error ? error.message : String(error)}`);
     }).finally(() => setSending(false));
-  }, [text, sending, props.onReply, toast, zh]);
-  const empty = text.trim().length === 0;
+  }, [text, images, sending, props.onReply, toast, zh]);
+  const empty = text.trim().length === 0 && images.length === 0;
+  const tint = withAlpha(tokens.accent, tokens.isDark ? 0.12 : 0.06);
   return (
-    <View testID="detail-reply" style={{ marginTop: 8, marginHorizontal: 6, flexDirection: "row", alignItems: "flex-end", gap: 6, padding: 4, borderRadius: 10, borderWidth: 1, borderColor: tokens.card.border, backgroundColor: tokens.card.background }}>
-      <TextInput
-        testID="detail-reply-input"
-        value={text}
-        onChangeText={setText}
-        editable={!sending}
-        multiline
-        placeholder={props.running ? (zh ? "回复（将在当前轮次后处理）…" : "Reply (the agent takes it after this turn)…") : (zh ? "回复这个任务…" : "Reply to this task…")}
-        placeholderTextColor={tokens.foregroundMuted}
-        onContentSizeChange={(event) => setHeight(Math.min(160, Math.max(36, Math.ceil(event.nativeEvent.contentSize.height))))}
-        onKeyPress={Platform.OS === "web" ? (event) => {
-          const native = event.nativeEvent as unknown as { key: string; shiftKey?: boolean; isComposing?: boolean };
-          if (native.key === "Enter" && !native.shiftKey && !native.isComposing) {
-            (event as unknown as { preventDefault?(): void }).preventDefault?.();
-            send();
-          }
-        } : undefined}
-        style={{ flex: 1, minHeight: 36, height, paddingHorizontal: 8, paddingVertical: 8, fontSize: F.sm, color: tokens.foreground, outlineStyle: "none" } as unknown as TextStyle}
-      />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={zh ? "发送" : "Send"}
-        {...tipProps(zh ? "发送 (Enter)" : "Send (Enter)")}
-        disabled={empty || sending}
-        onPress={send}
-        testID="detail-reply-send"
-        style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: empty ? "transparent" : tokens.accent, opacity: sending ? 0.6 : 1 }}
-      >
-        <Icon name={sending ? "Loader" : "ArrowUp"} size={16} color={empty ? tokens.foregroundMuted : "#ffffff"} />
-      </Pressable>
+    <View testID="detail-reply" style={{ marginTop: props.docked ? 0 : 10, marginHorizontal: props.docked ? 10 : 6, marginBottom: props.docked ? 8 : 0, padding: 8, gap: 6, borderRadius: 12, borderWidth: focused ? 2 : 1.5, borderColor: focused ? tokens.accent : withAlpha(tokens.accent, 0.6), backgroundColor: tint }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Icon name="Reply" size={14} color={tokens.accentText} />
+        <Text style={{ flex: 1, fontSize: F.sm, fontWeight: "700", color: tokens.accentText }}>{zh ? "回复 agent" : "Reply to the agent"}</Text>
+        <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{props.running ? (zh ? "加入当前轮次" : "joins the running turn") : Platform.OS === "web" ? (zh ? "Enter 发送 · 可粘贴图片" : "Enter sends · paste images") : ""}</Text>
+      </View>
+      {images.length > 0 ? (
+        <View testID="detail-reply-images" style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          {images.map((image, index) => (
+            <View key={index} style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: tokens.card.border }}>
+              <Image source={{ uri: `data:${image.mimeType};base64,${image.data}` }} style={{ width: 56, height: 56 }} resizeMode="cover" />
+              <Pressable accessibilityRole="button" accessibilityLabel={zh ? "移除图片" : "Remove image"} onPress={() => setImages((current) => current.filter((_, at) => at !== index))}
+                style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.6)" }}>
+                <Icon name="X" size={11} color="#ffffff" />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6 }}>
+        <TextInput
+          ref={input as never}
+          testID="detail-reply-input"
+          value={text}
+          onChangeText={setText}
+          editable={!sending}
+          multiline
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder={zh ? "写下你的回复…" : "Write your reply…"}
+          placeholderTextColor={tokens.foregroundMuted}
+          onContentSizeChange={(event) => setHeight(Math.min(200, Math.max(44, Math.ceil(event.nativeEvent.contentSize.height))))}
+          onKeyPress={Platform.OS === "web" ? (event) => {
+            const native = event.nativeEvent as unknown as { key: string; shiftKey?: boolean; isComposing?: boolean };
+            if (native.key === "Enter" && !native.shiftKey && !native.isComposing) {
+              (event as unknown as { preventDefault?(): void }).preventDefault?.();
+              send();
+            }
+          } : undefined}
+          style={{ flex: 1, minHeight: 44, height, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 8, backgroundColor: tokens.card.background, fontSize: F.base, color: tokens.foreground, outlineStyle: "none" } as unknown as TextStyle}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={zh ? "发送" : "Send"}
+          {...tipProps(zh ? "发送 (Enter)" : "Send (Enter)")}
+          disabled={empty || sending}
+          onPress={send}
+          testID="detail-reply-send"
+          style={{ height: 40, paddingHorizontal: 14, flexDirection: "row", gap: 5, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: tokens.accent, opacity: empty || sending ? 0.45 : 1 }}
+        >
+          <Icon name={sending ? "Loader" : "SendHorizontal"} size={15} color="#ffffff" />
+          <Text style={{ fontSize: F.sm, fontWeight: "700", color: "#ffffff" }}>{zh ? "发送" : "Send"}</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -1084,7 +1169,7 @@ function Section(props: Inner & { section: DetailSection; closed: boolean; divid
         ) : section === "message" ? (
           <>
             <TimelineTextBody {...props} read={props.lastMessage} id="detail-message" none={words.messageNone} error={words.messageError} copyLabel={words.copyMessage} copyToast="Copy message" flash />
-            {props.onReply && !card.subagent && !card.archived ? <ReplyBox key={card.id} onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
+            {props.onReply && !props.tabs && !card.subagent && !card.archived ? <ReplyBox key={card.id} onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
           </>
         ) : section === "properties" ? (
           <Properties {...props} />

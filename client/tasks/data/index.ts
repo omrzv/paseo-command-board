@@ -313,7 +313,7 @@ const TURN_END_ASK_DELAY_MS = 1_500;
 const GONE_CHECK_DELAYS_MS = [1_000, 3_000];
 
 /** `insights.get`: the model-written short descriptions and summaries the plugin server holds. */
-export type InsightsLoader = (agentIds: string[]) => Promise<Array<{ agentId: string; title: string; summary: string; generatedAt: number }>>;
+export type InsightsLoader = (agentIds: string[], ensure?: string[]) => Promise<Array<{ agentId: string; title: string; summary: string; generatedAt: number }>>;
 
 let insightsLoader: InsightsLoader | null = null;
 
@@ -1749,7 +1749,14 @@ function createStore(api: PaseoApi): TaskStore {
     if (!loader || entries.size === 0) return;
     try {
       const ids = [...entries.keys()].slice(0, 500);
-      const answer = await loader(ids);
+      // Cards that matter now and have no insight yet get one written: active lanes, review, and done in the last two days.
+      const recent = Date.now() - 2 * 24 * 60 * 60_000;
+      const ensure = ids.filter((id) => {
+        const card = cards.get(id);
+        if (!card || insights.has(id) || card.parent || card.subagent || card.archived) return false;
+        return card.lane !== "done" || epoch(card.timing.updatedAt) >= recent;
+      }).slice(0, 12);
+      const answer = await loader(ids, ensure);
       if (run !== generation) return;
       const changed: string[] = [];
       for (const insight of answer) {

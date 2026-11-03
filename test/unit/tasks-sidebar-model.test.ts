@@ -85,10 +85,10 @@ describe("sidebar width", () => {
     expect(tabletSidebarWidth(900, width)).toBe(width);
     expect(tabletSidebarWidth(900, 209)).toBe(210);
   });
-  it.each(["inline", "floating"] as const)("keeps the user's width up to 800 px while there is room in %s mode", (mode) => {
-    expect(sidebarWidth(2000, 380, mode)).toBe(380);
-    expect(sidebarWidth(2000, 800, mode)).toBe(800);
-    expect(sidebarWidth(2000, 900, mode)).toBe(800);
+  it.each(["inline", "floating"] as const)("keeps the user's width up to 1200 px while there is room in %s mode", (mode) => {
+    expect(sidebarWidth(3000, 380, mode)).toBe(380);
+    expect(sidebarWidth(3000, 1200, mode)).toBe(1200);
+    expect(sidebarWidth(3000, 1300, mode)).toBe(1200);
     expect(sidebarWidth(2000, 100, mode)).toBe(SIDEBAR.min);
   });
 

@@ -27,54 +27,82 @@ describe("slack helpers", () => {
 });
 
 describe("slack inbox", () => {
-  async function setup(classifyReply: string) {
+  async function setup(classifyReply: string, mine: Array<{ channel: string; tsOffsetMin: number; thread?: string }> = []) {
     const dir = await mkdtemp(join(tmpdir(), "slack-"));
     const path = join(dir, "slack.json");
     const now = Date.parse("2026-11-03T12:00:00Z");
     const ts = (offsetMin: number) => ((now + offsetMin * 60_000) / 1000).toFixed(6);
-    const calls: string[] = [];
+    const posted: Array<Record<string, unknown>> = [];
     const call = async (method: string, _token: string, params: Record<string, unknown>) => {
-      calls.push(method);
       if (method === "auth.test") return { ok: true, user_id: "UME", user: "omer", team: "Hero", url: "https://hero.slack.com/" };
-      if (method === "users.conversations") return { ok: true, channels: [{ id: "D1", is_im: true, user: "U1", updated: now }] };
       if (method === "users.info") return { ok: true, user: { profile: { display_name: params.user === "U1" ? "dana" : "x" } } };
-      if (method === "conversations.history") return { ok: true, messages: [
-        { user: "U1", text: "can you review https://claude.ai/public/artifacts/abc ?", ts: ts(-30) },
-        { user: "U1", text: "lunch?", ts: ts(-20) },
-        { user: "UME", text: "on it", ts: ts(-10) },
-      ] };
-      if (method === "search.messages") return { ok: true, messages: { matches: [] } };
+      if (method === "chat.postMessage") { posted.push(params); return { ok: true }; }
+      if (method === "search.messages") {
+        const query = String(params.query);
+        if (query.startsWith("is:dm")) return { ok: true, messages: { matches: [
+          { user: "U1", text: "can you review https://claude.ai/public/artifacts/abc ?", ts: ts(-30), channel: { id: "D1", is_im: true } },
+          { user: "U1", text: "lunch?", ts: ts(-20), channel: { id: "D1", is_im: true } },
+        ] } };
+        if (query.startsWith("<@UME>")) return { ok: true, messages: { matches: [
+          { user: "U2", text: "<@UME> what do you think about the rollout?", ts: ts(-15), channel: { id: "C1", name: "eng" } },
+        ] } };
+        if (query.startsWith("from:me")) return { ok: true, messages: { matches: mine.map((m) => ({
+          user: "UME", text: "x", ts: ts(m.tsOffsetMin), channel: { id: m.channel },
+          permalink: `https://hero.slack.com/archives/${m.channel}/p1${m.thread ? `?thread_ts=${m.thread}` : ""}`,
+        })) } };
+      }
       throw new Error(`unexpected ${method}`);
     };
     const inbox = createSlackInbox({ path, call, classify: async () => classifyReply, now: () => now });
-    return { inbox, path, calls };
+    return { inbox, path, posted, ts };
   }
 
-  it("connects, keeps the tasks the classifier picks, marks a later reply, and never returns the token", async () => {
-    const { inbox, path } = await setup('[{"i":0,"kind":"request","title":"Review Dana\'s artifact"}]');
+  it("connects, reads DMs and mentions by search, keeps the classified tasks, and never returns the token", async () => {
+    const { inbox, path } = await setup('[{"i":0,"kind":"request","title":"Review Dana\'s artifact"},{"i":2,"kind":"question","title":"Answer about rollout"}]');
     expect(await inbox.connect("bad")).toMatchObject({ ok: false });
     expect(await inbox.connect("xoxp-123-456")).toEqual({ ok: true, error: null });
     await inbox.scan();
     const items = await inbox.inbox();
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ where: "@dana", from: "dana", kind: "review", title: "Review Dana's artifact", replied: true, state: "open" });
-    expect(items[0]!.links).toEqual(["https://claude.ai/public/artifacts/abc"]);
-    expect(items[0]!.permalink).toMatch(/^https:\/\/hero\.slack\.com\/archives\/D1\/p\d+$/);
+    expect(items.map((item) => item.title)).toEqual(["Answer about rollout", "Review Dana's artifact"]);
+    const review = items[1]!;
+    expect(review).toMatchObject({ where: "@dana", from: "dana", kind: "review", replied: false, state: "open", direct: true });
+    expect(review.links).toEqual(["https://claude.ai/public/artifacts/abc"]);
+    expect(review.permalink).toMatch(/^https:\/\/hero\.slack\.com\/archives\/D1\/p\d+$/);
+    expect(items[0]!.where).toBe("#eng");
     const status = await inbox.status();
     expect(status).toMatchObject({ connected: true, team: "Hero", user: "omer", error: null });
     expect(JSON.stringify(status)).not.toContain("xoxp");
     expect(((await stat(path)).mode & 0o777).toString(8)).toBe("600");
     expect(await readFile(path, "utf8")).toContain("xoxp-123-456");
-
-    expect(await inbox.setState(items[0]!.id, "done")).toBe(true);
-    expect((await inbox.inbox())[0]!.state).toBe("done");
+    expect(await inbox.setState(review.id, "done")).toBe(true);
+    expect((await inbox.inbox()).find((item) => item.id === review.id)!.state).toBe("done");
   });
 
-  it("does not add the same message twice on the next scan", async () => {
-    const { inbox } = await setup('[{"i":0,"kind":"request","title":"Do it"}]');
+  it("closes items the person answered: later in the DM, in the thread, or in the channel soon after", async () => {
+    const mentionTs = ((Date.parse("2026-11-03T12:00:00Z") - 15 * 60_000) / 1000).toFixed(6);
+    const { inbox } = await setup(
+      '[{"i":0,"kind":"request","title":"Review"},{"i":2,"kind":"question","title":"Rollout"}]',
+      [{ channel: "D1", tsOffsetMin: -5 }, { channel: "C1", tsOffsetMin: -1, thread: mentionTs }],
+    );
+    await inbox.connect("xoxp-1");
+    await inbox.scan();
+    const items = await inbox.inbox();
+    expect(items.every((item) => item.replied && item.state === "done")).toBe(true);
+  });
+
+  it("does not add the same message twice, and replies in the thread or the DM", async () => {
+    const { inbox, posted } = await setup('[{"i":0,"kind":"request","title":"Do it"},{"i":2,"kind":"question","title":"Rollout"}]');
     await inbox.connect("xoxp-1");
     await inbox.scan();
     await inbox.scan();
-    expect(await inbox.inbox()).toHaveLength(1);
+    const items = await inbox.inbox();
+    expect(items).toHaveLength(2);
+    const dm = items.find((item) => item.direct)!;
+    const channel = items.find((item) => !item.direct)!;
+    expect(await inbox.reply(dm.id, "on it")).toEqual({ ok: true, error: null });
+    expect(await inbox.reply(channel.id, "looks good")).toEqual({ ok: true, error: null });
+    expect(posted[0]).toEqual({ channel: "D1", text: "on it" });
+    expect(posted[1]).toEqual({ channel: "C1", text: "looks good", thread_ts: channel.id.split(":")[1] });
+    expect((await inbox.inbox()).every((item) => item.state === "done" && item.replied)).toBe(true);
   });
 });

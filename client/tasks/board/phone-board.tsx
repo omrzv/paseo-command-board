@@ -1,3 +1,4 @@
+import type { ReplyImage } from "../cards/detail-cards";
 import React, { memo, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Animated,
@@ -627,7 +628,7 @@ function DetailsSheetBody(props: { card: TaskCard; board: BoardController; theme
           unarchive={board.unarchive.available ? board.unarchive : null}
           archive={board.archive}
           markRead={board.read.available ? board.read : null}
-          onReply={(text: string) => board.paseo.agents.ref(card.id).send(text)}
+          onReply={(text: string, images: ReplyImage[]) => board.paseo.agents.ref(card.id).send(text, { ...(images.length ? { images } : {}), activeTurnBehavior: "steer" })}
           onScrollEdge={setContentUnderBar}
         />
       </View>

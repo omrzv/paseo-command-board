@@ -10,6 +10,7 @@ import {
   slackDisconnectRpc,
   slackInboxRpc,
   slackItemSchema,
+  slackReplyRpc,
   slackScanRpc,
   slackSetStateRpc,
   slackStatusRpc,
@@ -34,6 +35,12 @@ const ITEMS_KEPT = 500;
 const CLASSIFY_BATCH = 25;
 const CONVERSATIONS_READ = 40;
 const SEEN_KEPT = 5_000;
+/** How much of a message an item keeps: the whole of nearly every message. */
+const FULL_TEXT = 6_000;
+/** How far back the person's own messages are read to see what they answered. */
+const REPLY_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+/** A channel message from the person this soon after a mention answers it. */
+const CHANNEL_ANSWER_MS = 6 * 60 * 60_000;
 
 const REVIEW_LINK = /https?:\/\/(?:claude\.ai\/[^\s>|]+|[^\s>|]*github\.com\/[^\s>|]+\/pull\/\d+[^\s>|]*|docs\.google\.com\/[^\s>|]+|[^\s>|]*notion\.so\/[^\s>|]+|[^\s>|]*figma\.com\/[^\s>|]+|[^\s>|]*linear\.app\/[^\s>|]+)/g;
 
@@ -47,7 +54,11 @@ const CLASSIFY_PROMPT = [
   "Return [] when none are tasks.",
 ].join(" ");
 
+/** Bumped when a scan bug may have skipped messages: the next scan reads the lookback again. */
+const SCAN_VERSION = 2;
+
 const fileSchema = z.object({
+  version: z.number().default(1),
   token: z.string().nullable().default(null),
   userId: z.string().nullable().default(null),
   user: z.string().nullable().default(null),
@@ -89,6 +100,7 @@ interface RawMessage {
   ts: string;
   threadTs?: string;
   permalink?: string;
+  direct?: boolean;
 }
 
 /** Slack's markup as plain text: user and channel mentions named, links shown by their label or URL. */
@@ -142,6 +154,7 @@ export function createSlackInbox(options: {
     if (state) return state;
     try {
       state = fileSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      if (state.version < SCAN_VERSION) state = { ...state, version: SCAN_VERSION, cursor: null };
     } catch {
       state = fileSchema.parse({});
     }
@@ -197,50 +210,83 @@ export function createSlackInbox(options: {
     return threadTs && threadTs !== ts ? `${link}?thread_ts=${threadTs}&cid=${channelId}` : link;
   }
 
-  /** DMs and group DMs with activity since the cursor: their messages, and when the person last wrote in each. */
-  async function readDirect(token: string, me: string, since: number) {
-    const messages: RawMessage[] = [];
-    const myLast = new Map<string, number>();
-    const list = await call("users.conversations", token, { types: "im,mpim", exclude_archived: true, limit: 200 });
-    const channels = (list.channels as Array<{ id: string; is_im?: boolean; user?: string; name?: string; updated?: number }> | undefined) ?? [];
-    // Most recently active first; `updated` is in ms on newer workspaces, seconds on older ones.
-    const active = channels
-      .map((channel) => ({ ...channel, at: channel.updated ? (channel.updated > 1e12 ? channel.updated : channel.updated * 1000) : Number.POSITIVE_INFINITY }))
-      .filter((channel) => channel.at >= since)
-      .sort((left, right) => right.at - left.at)
-      .slice(0, CONVERSATIONS_READ);
-    for (const channel of active) {
-      const where = channel.is_im && channel.user ? `@${await userName(token, channel.user)}` : "Group DM";
-      const history = await call("conversations.history", token, { channel: channel.id, oldest: (since / 1000).toFixed(6), limit: 50 });
-      for (const message of (history.messages as Array<{ user?: string; text?: string; ts: string; thread_ts?: string; subtype?: string; bot_id?: string }> | undefined) ?? []) {
-        if (!message.user || message.subtype) continue;
-        const at = Number(message.ts) * 1000;
-        if (message.user === me) {
-          myLast.set(channel.id, Math.max(myLast.get(channel.id) ?? 0, at));
-          continue;
-        }
-        if (message.bot_id || !message.text?.trim()) continue;
-        messages.push({ channelId: channel.id, where, user: message.user, text: message.text, ts: message.ts, threadTs: message.thread_ts });
-      }
+  type SearchMatch = {
+    user?: string; username?: string; text?: string; ts: string; permalink?: string;
+    channel?: { id: string; name?: string; is_im?: boolean; is_mpim?: boolean; is_private?: boolean; user?: string };
+  };
+
+  /** All pages of one search, newest first, at most `pages` pages of 100. */
+  async function search(token: string, query: string, pages = 3): Promise<SearchMatch[]> {
+    const out: SearchMatch[] = [];
+    for (let page = 1; page <= pages; page++) {
+      const result = await call("search.messages", token, { query, sort: "timestamp", sort_dir: "desc", count: 100, page });
+      const messages = result.messages as { matches?: SearchMatch[]; paging?: { pages?: number } } | undefined;
+      out.push(...(messages?.matches ?? []));
+      if (!messages?.paging?.pages || page >= messages.paging.pages) break;
     }
-    return { messages, myLast };
+    return out;
   }
 
-  /** Channel messages that mention the person since the cursor. */
-  async function readMentions(token: string, me: string, since: number): Promise<RawMessage[]> {
-    const day = new Date(since - 24 * 60 * 60_000).toISOString().slice(0, 10);
-    const result = await call("search.messages", token, { query: `<@${me}> after:${day}`, sort: "timestamp", sort_dir: "desc", count: 50 });
-    const matches = ((result.messages as { matches?: unknown[] } | undefined)?.matches ?? []) as Array<{
-      user?: string; text?: string; ts: string; permalink?: string; channel?: { id: string; name?: string; is_im?: boolean; is_mpim?: boolean };
-    }>;
+  const threadOf = (match: SearchMatch): string | undefined => {
+    if (!match.permalink) return undefined;
+    try {
+      return new URL(match.permalink).searchParams.get("thread_ts") ?? undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const day = (at: number) => new Date(at - 24 * 60 * 60_000).toISOString().slice(0, 10);
+
+  /**
+   * Messages to the person since `since`: every DM and group DM (Slack's
+   * `is:dm` search; the conversation list's `updated` is not the last message's
+   * time), and channel messages that mention them.
+   */
+  async function readIncoming(token: string, me: string, since: number): Promise<RawMessage[]> {
+    const [direct, mentions] = await Promise.all([
+      search(token, `is:dm after:${day(since)}`),
+      search(token, `<@${me}> after:${day(since)}`),
+    ]);
     const messages: RawMessage[] = [];
-    for (const match of matches) {
-      if (!match.user || match.user === me || !match.channel || match.channel.is_im || match.channel.is_mpim) continue;
-      if (Number(match.ts) * 1000 < since || !match.text?.trim()) continue;
-      const thread = match.permalink ? new URL(match.permalink).searchParams.get("thread_ts") ?? undefined : undefined;
-      messages.push({ channelId: match.channel.id, where: `#${match.channel.name ?? match.channel.id}`, user: match.user, text: match.text, ts: match.ts, threadTs: thread, permalink: match.permalink });
+    const seenHere = new Set<string>();
+    for (const match of [...direct, ...mentions]) {
+      if (!match.user || match.user === me || !match.channel || !match.text?.trim()) continue;
+      if (Number(match.ts) * 1000 < since) continue;
+      const key = `${match.channel.id}:${match.ts}`;
+      if (seenHere.has(key)) continue;
+      seenHere.add(key);
+      const channel = match.channel;
+      const where = channel.is_im
+        ? `@${await userName(token, match.user)}`
+        : channel.is_mpim ? "Group DM" : `#${channel.name ?? channel.id}`;
+      messages.push({ channelId: channel.id, where, user: match.user, text: match.text, ts: match.ts, threadTs: threadOf(match), permalink: match.permalink, direct: Boolean(channel.is_im || channel.is_mpim) });
     }
     return messages;
+  }
+
+  /** The person's own messages since `since`: where they wrote, and in which thread. */
+  async function readMine(token: string, since: number): Promise<Array<{ channelId: string; at: number; threadTs?: string }>> {
+    const matches = await search(token, `from:me after:${day(since)}`, 2);
+    return matches
+      .filter((match) => match.channel)
+      .map((match) => ({ channelId: match.channel!.id, at: Number(match.ts) * 1000, threadTs: threadOf(match) }));
+  }
+
+  /**
+   * Whether the person answered an item: in its thread (a message whose thread
+   * is the item's, or whose thread the item started), or, for a DM outside any
+   * thread, anywhere in that DM after it.
+   */
+  function answered(item: SlackItem, mine: ReadonlyArray<{ channelId: string; at: number; threadTs?: string }>): boolean {
+    const thread = item.threadTs ?? item.id.split(":")[1];
+    return mine.some((message) => {
+      if (message.channelId !== item.channelId || message.at <= item.at) return false;
+      if (message.threadTs && message.threadTs === thread) return true;
+      if (item.threadTs || message.threadTs) return false;
+      // Outside threads: anything later in a DM, or a channel message soon after (answering in the channel, not the thread).
+      return item.direct === true || message.at - item.at <= CHANNEL_ANSWER_MS;
+    });
   }
 
   async function scanOnce(): Promise<void> {
@@ -250,9 +296,13 @@ export function createSlackInbox(options: {
     if (!token || !me) return;
     const started = now();
     const since = current.cursor ?? started - FIRST_LOOKBACK_MS;
-    const [direct, mentions] = await Promise.all([readDirect(token, me, since), readMentions(token, me, since)]);
+    const openSince = Math.min(since, ...current.items.filter((item) => item.state === "open").map((item) => item.at));
+    const [incoming, mine] = await Promise.all([
+      readIncoming(token, me, since),
+      readMine(token, Math.max(openSince, started - REPLY_LOOKBACK_MS)),
+    ]);
     const known = new Set([...current.seen, ...current.items.map((item) => item.id)]);
-    const fresh = [...direct.messages, ...mentions].filter((message) => !known.has(`${message.channelId}:${message.ts}`));
+    const fresh = incoming.filter((message) => !known.has(`${message.channelId}:${message.ts}`));
     fresh.sort((left, right) => Number(left.ts) - Number(right.ts));
 
     const added: SlackItem[] = [];
@@ -261,9 +311,9 @@ export function createSlackInbox(options: {
       const texts = await Promise.all(batch.map(async (message) => {
         const from = await userName(token, message.user);
         for (const id of message.text.matchAll(/<@([A-Z0-9]+)/g)) await userName(token, id[1]!);
-        return { from, text: plainSlackText(message.text, names).slice(0, 1200) };
+        return { from, text: plainSlackText(message.text, names) };
       }));
-      const prompt = `Messages:\n${JSON.stringify(batch.map((message, i) => ({ i, where: message.where, from: texts[i]!.from, text: texts[i]!.text })))}`;
+      const prompt = `Messages:\n${JSON.stringify(batch.map((message, i) => ({ i, where: message.where, from: texts[i]!.from, text: texts[i]!.text.slice(0, 1500) })))}`;
       const tasks = parseClassification(await classify(prompt));
       for (const task of tasks) {
         const message = batch[task.i];
@@ -274,32 +324,56 @@ export function createSlackInbox(options: {
           channelId: message.channelId,
           where: message.where,
           from: texts[task.i]!.from,
-          text: text.slice(0, 600),
+          text: text.slice(0, FULL_TEXT),
           permalink: message.permalink ?? permalink(current.teamUrl, message.channelId, message.ts, message.threadTs),
           at: Number(message.ts) * 1000,
-          kind: reviewLinks(message.text).length > 0 && task.kind !== "question" ? "review" : task.kind,
+          kind: reviewLinks(text).length > 0 && task.kind !== "question" ? "review" : task.kind,
           title: task.title,
-          links: reviewLinks(plainSlackText(message.text, names)),
+          links: reviewLinks(text),
           state: "open",
           replied: false,
+          ...(message.threadTs && message.threadTs !== message.ts ? { threadTs: message.threadTs } : {}),
+          direct: message.direct,
         });
       }
     }
 
     current.seen = [...current.seen, ...fresh.map((message) => `${message.channelId}:${message.ts}`)].slice(-SEEN_KEPT);
     const items = [...current.items, ...added];
-    // A reply from the person in a DM after a task marks it replied (it stays open until Done).
+    // An answer from the person closes the item; Reopen brings it back.
     for (const item of items) {
-      const mine = direct.myLast.get(item.channelId);
-      if (mine !== undefined && mine > item.at && !item.replied) item.replied = true;
+      if (item.replied || !answered(item, mine)) continue;
+      item.replied = true;
+      if (item.state === "open") item.state = "done";
     }
     items.sort((left, right) => left.at - right.at);
     current.items = items.slice(-ITEMS_KEPT);
-    const newest = Math.max(since, ...fresh.map((message) => Number(message.ts) * 1000));
-    // A little overlap, so a message that arrives during the scan is not skipped; ids dedupe it.
-    current.cursor = Math.min(newest, started) - 60_000;
+    // Search is by day; the cursor only says where the next scan starts, ids dedupe the overlap.
+    current.cursor = started - 10 * 60_000;
     current.lastScanAt = now();
     await persist();
+  }
+
+  /** Posts the person's reply as them: in the item's thread, or in the DM when it was not threaded. */
+  async function reply(id: string, text: string): Promise<{ ok: boolean; error: string | null }> {
+    const current = await load();
+    const item = current.items.find((entry) => entry.id === id);
+    if (!current.token || !item) return { ok: false, error: "Slack is not connected, or the message is gone." };
+    const ts = item.id.split(":")[1]!;
+    const thread = item.threadTs ?? (item.direct ? undefined : ts);
+    try {
+      await call("chat.postMessage", current.token, { channel: item.channelId, text, ...(thread ? { thread_ts: thread } : {}) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/missing_scope|not_allowed_token_type/.test(message)) {
+        return { ok: false, error: "Add the chat:write user scope to your Slack app, reinstall it, and connect again with the new token." };
+      }
+      return { ok: false, error: message };
+    }
+    item.replied = true;
+    item.state = "done";
+    await persist();
+    return { ok: true, error: null };
   }
 
   function scan(): Promise<void> {
@@ -350,6 +424,7 @@ export function createSlackInbox(options: {
         .filter((item) => item.state === "open" || item.at >= cutoff)
         .sort((left, right) => right.at - left.at);
     },
+    reply,
     async setState(id: string, next: SlackItem["state"]): Promise<boolean> {
       const current = await load();
       const item = current.items.find((entry) => entry.id === id);
@@ -377,6 +452,7 @@ export function registerSlackServer(server: PluginServerContext, inbox = createS
   });
   server.handle(slackStatusRpc, async () => ({ status: await inbox.status() }));
   server.handle(slackInboxRpc, async () => ({ items: await inbox.inbox(), status: await inbox.status() }));
+  server.handle(slackReplyRpc, ({ id, text }) => inbox.reply(id, text));
   server.handle(slackSetStateRpc, async ({ id, state }) => ({ ok: await inbox.setState(id, state) }));
   server.handle(slackScanRpc, async () => {
     void inbox.scan();

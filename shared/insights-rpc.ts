@@ -18,7 +18,11 @@ export type AgentInsight = z.output<typeof agentInsightSchema>;
 /** The stored insights of these agents; agents without one are left out. */
 export const insightsGetRpc = defineRpc({
   name: "insights.get",
-  input: z.object({ agentIds: z.array(z.string().min(1)).max(500) }),
+  input: z.object({
+    agentIds: z.array(z.string().min(1)).max(500),
+    /** Agents to write an insight for when they have none yet (the board's active cards), a few per call. */
+    ensure: z.array(z.string().min(1)).max(50).optional(),
+  }),
   output: z.object({ insights: z.array(agentInsightSchema), available: z.boolean() }),
 });
 

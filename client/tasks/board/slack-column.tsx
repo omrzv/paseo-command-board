@@ -14,8 +14,10 @@ import {
   slackConnectRpc,
   slackInboxRpc,
   slackScanRpc,
+  slackReplyRpc,
   slackSetStateRpc,
 } from "../../../shared/slack-rpc";
+import { LinkedText } from "../cards/linked-text";
 
 const POLL_MS = 30_000;
 const COLLAPSED_WIDTH = 40;
@@ -144,9 +146,11 @@ function HeaderButton(props: { icon: string; label: string; tokens: TaskTokens; 
 function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: SlackItem, state: SlackItem["state"]): void }) {
   const { item, tokens } = props;
   const closed = item.state !== "open";
+  const [expanded, setExpanded] = useState(false);
   const tint = item.kind === "review" ? tokens.accent : item.kind === "question" ? tokens.status.warning : SLACK_COLOR;
   return (
-    <View testID={`slack-card-${item.id}`} style={{ borderRadius: 10, borderWidth: 1, borderColor: tokens.card.border, backgroundColor: tokens.card.background, padding: 10, paddingLeft: 13, gap: 5, opacity: closed ? 0.55 : 1, overflow: "hidden" }}>
+    <Pressable testID={`slack-card-${item.id}`} accessibilityLabel={expanded ? "Collapse message" : "Show the whole message"} onPress={() => setExpanded((was) => !was)}
+      style={{ borderRadius: 10, borderWidth: 1, borderColor: expanded ? tint : tokens.card.border, backgroundColor: tokens.card.background, padding: 10, paddingLeft: 13, gap: 5, opacity: closed && !expanded ? 0.55 : 1, overflow: "hidden" }}>
       <View pointerEvents="none" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: tint }} />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
         <Icon name={KIND_ICON[item.kind]} size={13} color={tint} />
@@ -155,7 +159,8 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
         <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{formatRelative(Date.now() - item.at, "en")}</Text>
       </View>
       <Text numberOfLines={2} style={{ fontSize: F.base, fontWeight: "600", color: tokens.foreground, textDecorationLine: closed ? "line-through" : "none" }}>{item.title}</Text>
-      <Text numberOfLines={3} style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{item.text}</Text>
+      <LinkedText text={item.text} linkColor={tokens.accentText} numberOfLines={expanded ? undefined : 3} selectable={expanded}
+        style={{ fontSize: expanded ? F.base : F.sm, lineHeight: expanded ? Math.round(F.base * 1.45) : undefined, color: expanded ? tokens.foreground : tokens.foregroundMuted }} />
       {item.links.length > 0 ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
           {item.links.map((url) => (
@@ -180,6 +185,57 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
           </>
         )}
       </View>
+      {expanded && item.state === "open" ? <SlackReply item={item} tokens={tokens} tint={tint} onSent={() => props.onState({ ...item, replied: true }, "done")} /> : null}
+    </Pressable>
+  );
+}
+
+/** A reply posted as the person: in the message's thread, or in its DM. */
+function SlackReply(props: { item: SlackItem; tokens: TaskTokens; tint: string; onSent(): void }) {
+  const { tokens } = props;
+  const reply = useRpc(slackReplyRpc);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const send = () => {
+    const message = text.trim();
+    if (!message || busy) return;
+    setBusy(true);
+    setError(null);
+    void reply({ id: props.item.id, text: message }).then((result) => {
+      if (result.ok) {
+        setText("");
+        props.onSent();
+      } else setError(result.error);
+    }, (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught))).finally(() => setBusy(false));
+  };
+  const where = props.item.direct && !props.item.threadTs ? `Reply to ${props.item.where}` : "Reply in thread";
+  return (
+    <View style={{ marginTop: 6, gap: 6 }} onStartShouldSetResponder={() => true}>
+      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, padding: 4, borderRadius: 8, borderWidth: 1.5, borderColor: props.tint }}>
+        <TextInput
+          testID="slack-reply-input"
+          value={text}
+          onChangeText={setText}
+          multiline
+          editable={!busy}
+          placeholder={`${where}…`}
+          placeholderTextColor={tokens.foregroundMuted}
+          onKeyPress={(event) => {
+            const native = event.nativeEvent as unknown as { key: string; shiftKey?: boolean; isComposing?: boolean };
+            if (native.key === "Enter" && !native.shiftKey && !native.isComposing) {
+              (event as unknown as { preventDefault?(): void }).preventDefault?.();
+              send();
+            }
+          }}
+          style={{ flex: 1, minHeight: 34, maxHeight: 140, paddingHorizontal: 8, paddingVertical: 7, fontSize: F.sm, color: tokens.foreground, outlineStyle: "none" } as unknown as TextStyle}
+        />
+        <Pressable accessibilityRole="button" accessibilityLabel="Send to Slack" onPress={send} disabled={busy || !text.trim()}
+          style={{ height: 30, paddingHorizontal: 10, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: props.tint, opacity: busy || !text.trim() ? 0.5 : 1 }}>
+          <Text style={{ fontSize: F.sm, fontWeight: "600", color: "#ffffff" }}>{busy ? "Sending…" : "Send"}</Text>
+        </Pressable>
+      </View>
+      {error ? <Text style={{ fontSize: F.sm, color: tokens.danger }}>{error}</Text> : null}
     </View>
   );
 }
