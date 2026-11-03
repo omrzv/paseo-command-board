@@ -29,7 +29,7 @@ export const TITLE_SAVE_DELAY_MS = 1000;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** A round starts with a user message and includes every assistant reply until the next user message. */
-async function readTitleRounds(timeline: PaseoAgentTimelineHandle, direction: "after" | "tail", count: number) {
+export async function readTitleRounds(timeline: PaseoAgentTimelineHandle, direction: "after" | "tail", count: number) {
   const messages: { seq: number; role: "user_message" | "assistant_message"; text: string }[] = [];
   let rounds = 0;
   let cursor: NonNullable<Parameters<PaseoAgentTimelineHandle["refetch"]>[0]>["cursor"];

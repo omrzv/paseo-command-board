@@ -913,7 +913,7 @@ describe("Tasks read control", () => {
       vi.advanceTimersByTime(READ_VERIFY_MS);
     });
     expect(current().pending("agent-a")).toBe(false);
-    expect(mocks.toastError).toHaveBeenCalledWith("Could not mark as read: the task is still to review.");
+    expect(mocks.toastError).toHaveBeenCalledWith("Could not mark as done: the task is still to review.");
   });
 
   it("toasts the server's error and a rejected RPC, and ignores a card that is not readable", async () => {

@@ -825,7 +825,10 @@ function TaskCardViewImpl(given: TaskCardViewProps) {
 
   // Meta row ---------------------------------------------------------------
   const avatar = layout.projectAvatar;
+  // The project's colour leads the card: its stripe, and the location in bold.
+  const projectColor = location.projectIconColor || (location.projectId || location.projectName ? identityColor(projectViewKey(location, props.hostId)) : null);
   const metaStyle = text(m.metaSize, m.metaLine, muted);
+  const locationStyle: TextStyle = projectColor ? { ...text(m.metaSize + 1, m.metaLine + 1, projectColor), fontWeight: "700" } : metaStyle;
   const parentLabel = card.parent ? card.parent.title ?? strings.parentUnknown : null;
   // An archived parent, itself or with its workspace, is tagged so beside its link.
   let parentTag: string | null = null;
@@ -865,7 +868,7 @@ function TaskCardViewImpl(given: TaskCardViewProps) {
             <Text
               numberOfLines={1}
               ellipsizeMode={clip ? "clip" : "tail"}
-              style={[metaStyle, { flexShrink: 1, minWidth: 0 }, clipText]}
+              style={[locationStyle, { flexShrink: 1, minWidth: 0 }, clipText]}
               testID="task-card-meta-location"
               {...hintProps(
                 hint("location", () =>
@@ -1554,6 +1557,7 @@ function TaskCardViewImpl(given: TaskCardViewProps) {
         testID={`task-card-${card.id}`}
       >
         {fold ? <CutCardSurface size={corner.fold} radius={CARD_RADIUS} background={background} borderColor={borderColor} borderWidth={borderWidth} dashed={dashed} shadow={shadow} fold={fold} /> : null}
+        {projectColor && !card.subagent ? <View pointerEvents="none" testID="task-card-project-stripe" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: projectColor, borderTopLeftRadius: CARD_RADIUS, borderBottomLeftRadius: CARD_RADIUS }} /> : null}
         {issue && hit !== null ? (
           <AvailabilityCorner
             issue={issue}

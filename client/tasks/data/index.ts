@@ -312,6 +312,22 @@ const TURN_END_ASK_DELAY_MS = 1_500;
 /** When a closed agent is looked up for a delete: soon after it closed, then once more for a slow delete. */
 const GONE_CHECK_DELAYS_MS = [1_000, 3_000];
 
+/** `insights.get`: the model-written short descriptions and summaries the plugin server holds. */
+export type InsightsLoader = (agentIds: string[]) => Promise<Array<{ agentId: string; title: string; summary: string; generatedAt: number }>>;
+
+let insightsLoader: InsightsLoader | null = null;
+
+/** `contribute` sets the loader; insights are read with the read marks. */
+export function setInsightsLoader(next: InsightsLoader | null): void {
+  insightsLoader = next;
+}
+
+/** The card with its insight: the short description as its title, the agent's own title kept. */
+export function withInsight(card: TaskCard, insight: { title: string; summary: string; generatedAt: number } | undefined): TaskCard {
+  if (!insight || card.subagent) return card;
+  return { ...card, title: insight.title, insight: { agentTitle: card.title, summary: insight.summary, generatedAt: insight.generatedAt } };
+}
+
 /** `contribute` sets the loader, since only the plugin context can call RPCs outside a component. */
 export function setLastTurnLoader(next: LastTurnLoader | null): void {
   lastTurnLoader = next;
@@ -346,7 +362,14 @@ export function setSubagentLoader(next: SubagentLoader | null): void {
 }
 
 /** `tasks.reads`: the agents marked read from a board, with when. */
-export type ReadMarksLoader = () => Promise<Array<{ agentId: string; readAt: string }>>;
+export type ReadMark = { agentId: string; readAt: string };
+/** `tasks.reads`' `pending`: agents whose completed turn nobody has handled yet. */
+export type PendingReview = { agentId: string; endedAt: string };
+/** The marks alone (older servers, tests), or with the pending reviews. */
+export type ReadMarksLoader = () => Promise<ReadMark[] | { reads: ReadMark[]; pending?: PendingReview[] }>;
+/** A pending review card off the board that this many bring in, at most. */
+const REVIEW_AGENTS_FETCHED = 30;
+const REVIEW_KEY = "pending-reviews";
 
 let readMarksLoader: ReadMarksLoader | null = null;
 
@@ -581,7 +604,13 @@ export function withTurnError(card: TaskCard, turnError: TurnError | undefined):
  * subagent failed after the mark (`failedAt`, the latest failure the board
  * knows the time of). Every review card can be marked read; no other can.
  */
-export function withReadMark(card: TaskCard, readAt: number | undefined, failedAt: number): TaskCard {
+export function withReadMark(card: TaskCard, readAt: number | undefined, failedAt: number, pendingAt?: number): TaskCard {
+  // A finished turn nobody handled stays in review after its tab was opened,
+  // until a reply (a new turn), Done (a read mark) or archive. Subtasks are
+  // reviewed through their parent.
+  if (card.lane === "done" && card.status === "done" && pendingAt !== undefined && !card.parent && pendingAt > (readAt ?? Number.NEGATIVE_INFINITY)) {
+    return { ...card, lane: "review", status: "unread", readable: true };
+  }
   if (card.lane !== "review") return card.readable ? { ...card, readable: false } : card;
   if (readAt !== undefined && readAt >= epoch(card.timing.lastUserMessageAt) && failedAt <= readAt) {
     return { ...card, lane: "done", status: "done", readable: false };
@@ -876,6 +905,10 @@ function createStore(api: PaseoApi): TaskStore {
   let subagentReading = false;
   /** The server's read marks (`tasks.reads`), as epoch ms by agent. */
   const readMarks = new Map<string, number>();
+  /** The server's pending reviews, as epoch ms of the turn's end by agent. */
+  const pendingReviews = new Map<string, number>();
+  const insights = new Map<string, { title: string; summary: string; generatedAt: number }>();
+  const reviewAgentsAsked = new Set<string>();
   /** Failed parents asked for by id, once per version of the list. */
   const subagentParentsAsked = new Set<string>();
   const subscriptions = new Map<string, StoreSubscription>();
@@ -1033,7 +1066,7 @@ function createStore(api: PaseoApi): TaskStore {
         : resolvedParents.get(parentAgentId)?.archived ? "agent" : null;
     const childIds = childrenByParent.get(id);
     const next: TaskCard = withArchived(withActiveSubtasks(withReadMark(withSubagents({
-      ...withTurnError(base, turnErrors.get(id)),
+      ...withInsight(withTurnError(base, turnErrors.get(id)), insights.get(id)),
       usage: withRecordedCost(base.usage, turnCosts.get(id)),
       timing: withLastTurn({ ...base.timing, archivedAt }, lastTurns.get(id), base.lane === "running" || base.lane === "needs_input"),
       parent: parentAgentId
@@ -1069,7 +1102,7 @@ function createStore(api: PaseoApi): TaskStore {
             .filter((child): child is TaskChild => child !== null)
             .sort((left, right) => left.title.localeCompare(right.title))
         : [],
-    }, subagentsByParent.get(id)), readMarks.get(id), latestFailure(id))), archivedKind);
+    }, subagentsByParent.get(id)), readMarks.get(id), latestFailure(id), pendingReviews.get(id))), archivedKind);
     const previous = cards.get(id);
     if (shallowCardEqual(previous, next)) return false;
     cards.set(id, next);
@@ -1228,6 +1261,8 @@ function createStore(api: PaseoApi): TaskStore {
       const wasMember = sourceMembers.get(sourceKey)?.delete(payload.agentId);
       // Held for a subagent failure, it stays; the list it left had its latest state, so read it again.
       if (sourceMembers.get(SUBAGENT_KEY)?.has(payload.agentId)) fetchSubagentParent(payload.agentId, generation);
+      // Held for a pending review, likewise.
+      if (sourceMembers.get(REVIEW_KEY)?.has(payload.agentId)) fetchReviewAgent(payload.agentId, generation);
       if (wasMember && memberSetsContaining(payload.agentId).length === 0 && doneConsumers > 0) {
         confirmRemovedAgent(payload.agentId);
       } else if (wasMember) {
@@ -1606,6 +1641,7 @@ function createStore(api: PaseoApi): TaskStore {
     subagentReading = true;
     try {
       await readReads(run);
+      await readInsights(run);
       const result = await loader(subagentVersion);
       if (run !== generation) return;
       if (result.subagents) applySubagents(result.version, result.subagents);
@@ -1661,8 +1697,10 @@ function createStore(api: PaseoApi): TaskStore {
     const loader = readMarksLoader;
     if (!loader) return;
     try {
-      const marks = await loader();
+      const answer = await loader();
       if (run !== generation) return;
+      const marks = Array.isArray(answer) ? answer : answer.reads;
+      const pending = Array.isArray(answer) ? undefined : answer.pending;
       const next = new Map<string, number>();
       for (const mark of marks) {
         const at = Date.parse(mark.readAt);
@@ -1671,9 +1709,25 @@ function createStore(api: PaseoApi): TaskStore {
       const changed = new Set<string>();
       for (const [id, at] of next) if (readMarks.get(id) !== at) changed.add(id);
       for (const id of readMarks.keys()) if (!next.has(id)) changed.add(id);
-      if (changed.size === 0) return;
+      const nextPending = new Map<string, number>();
+      for (const review of pending ?? []) {
+        const at = Date.parse(review.endedAt);
+        if (Number.isFinite(at)) nextPending.set(review.agentId, at);
+      }
+      if (pending !== undefined) {
+        for (const [id, at] of nextPending) if (pendingReviews.get(id) !== at) changed.add(id);
+        for (const id of pendingReviews.keys()) if (!nextPending.has(id)) changed.add(id);
+      }
+      if (changed.size === 0) {
+        syncPendingReviews();
+        return;
+      }
       readMarks.clear();
       for (const [id, at] of next) readMarks.set(id, at);
+      if (pending !== undefined) {
+        pendingReviews.clear();
+        for (const [id, at] of nextPending) pendingReviews.set(id, at);
+      }
       batchUpdates(() => {
         for (const id of changed) {
           refreshFinalCard(id);
@@ -1681,11 +1735,87 @@ function createStore(api: PaseoApi): TaskStore {
           if (parent) refreshFinalCard(parent);
         }
         syncSubagentParents();
+        syncPendingReviews();
         notify();
       });
     } catch {
       // An older server without `tasks.reads`, or a failed read: the marks stay as they were.
     }
+  }
+
+  /** The server's insights for every agent on the board; a changed one retitles its card. */
+  async function readInsights(run: number) {
+    const loader = insightsLoader;
+    if (!loader || entries.size === 0) return;
+    try {
+      const ids = [...entries.keys()].slice(0, 500);
+      const answer = await loader(ids);
+      if (run !== generation) return;
+      const changed: string[] = [];
+      for (const insight of answer) {
+        if (insights.get(insight.agentId)?.generatedAt === insight.generatedAt) continue;
+        insights.set(insight.agentId, { title: insight.title, summary: insight.summary, generatedAt: insight.generatedAt });
+        changed.push(insight.agentId);
+      }
+      if (changed.length === 0) return;
+      batchUpdates(() => {
+        for (const id of changed) refreshFinalCard(id);
+        notify();
+      });
+    } catch {
+      // An older server without insights: cards keep the agent's title.
+    }
+  }
+
+  /** Whether a pending review still holds the agent on the board: not handled since its turn ended. */
+  function reviewPending(id: string): boolean {
+    const at = pendingReviews.get(id);
+    return at !== undefined && at > (readMarks.get(id) ?? Number.NEGATIVE_INFINITY);
+  }
+
+  /**
+   * Keeps every agent with a pending review on the board, whether or not a
+   * list holds it (the done pages stop at their window and page): one the
+   * lists do not hold is fetched by id. Handled ones are let go.
+   */
+  function syncPendingReviews() {
+    let members = sourceMembers.get(REVIEW_KEY);
+    if (!members) sourceMembers.set(REVIEW_KEY, members = new Set());
+    for (const id of [...members]) {
+      if (reviewPending(id)) continue;
+      members.delete(id);
+      reviewAgentsAsked.delete(id);
+      dropIfUnreferenced(id);
+    }
+    let budget = REVIEW_AGENTS_FETCHED;
+    for (const id of pendingReviews.keys()) {
+      if (!reviewPending(id)) continue;
+      if (entries.has(id)) {
+        members.add(id);
+        continue;
+      }
+      if (reviewAgentsAsked.has(id) || budget <= 0) continue;
+      reviewAgentsAsked.add(id);
+      budget -= 1;
+      fetchReviewAgent(id, generation);
+    }
+  }
+
+  /** A pending review agent no list holds: read by id, kept while its review is pending. */
+  function fetchReviewAgent(id: string, run: number) {
+    void api.agents.ref(id).refresh().then((result) => {
+      if (run !== generation) return;
+      const members = sourceMembers.get(REVIEW_KEY);
+      if (!result || isArchived(result.agent) || !reviewPending(id)) {
+        if (members?.delete(id)) dropIfUnreferenced(id);
+        return;
+      }
+      members?.add(id);
+      updateRecord(result.agent, result.project ?? null);
+      notify();
+    }).catch(() => {
+      // Gone meanwhile: the next read drops it.
+    });
   }
 
   /**
@@ -2242,6 +2372,9 @@ function createStore(api: PaseoApi): TaskStore {
     subagentParentsAsked.clear();
     subagentVersion = undefined;
     readMarks.clear();
+    pendingReviews.clear();
+    reviewAgentsAsked.clear();
+    insights.clear();
     statusReady = false;
     attentionReady = false;
     workspacesReady = false;

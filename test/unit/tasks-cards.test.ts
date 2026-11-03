@@ -120,7 +120,7 @@ import { detailColors } from "../../client/tasks/cards/detail-charts";
 import { createTitleUpdateControl } from "../../client/tasks/actions/title-update";
 import type { TitleUpdateState } from "../../shared/title-generation";
 import { TagMark } from "../../client/tasks/cards/tag-mark";
-import { resetSectionChoices } from "../../client/tasks/cards/detail-collapse";
+import { resetSectionChoices, setSectionClosed } from "../../client/tasks/cards/detail-collapse";
 import { FLASH } from "../../client/tasks/board/breathing";
 import { cornerLayout, FOLD_TINT, MARK_DOT, MARK_DOT_BOX, markHue, markRest, OVERLAY_ROW_Z, ringNudge, warningHit } from "../../client/tasks/cards/task-card";
 import { SubtaskRow, SubtaskMetadata } from "../../client/tasks/cards/subtask-row";
@@ -660,6 +660,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   pointer.hover = false;
+  // A test that opened the folded first prompt leaves the next one its default.
+  resetSectionChoices();
   if (renderer) {
     const current = renderer;
     await act(async () => current.unmount());
@@ -851,6 +853,7 @@ describe("TaskCardView rows", () => {
   it("lays the card out as Linear does: meta, title, pills, footer, then the lane blocks", async () => {
     const tree = await render(cardElement(sample("sample-running")));
     expect(rows(tree.root, "sample-running")).toEqual([
+      "task-card-project-stripe",
       "task-card-meta",
       "task-card-title-row",
       "task-card-pills",
@@ -931,7 +934,7 @@ describe("TaskCardView rows", () => {
 
   it("keeps the title row, the agent pill and the footer at minimal", async () => {
     const tree = await render(cardElement(sample("sample-running"), { fields: fields("minimal") }));
-    expect(rows(tree.root, "sample-running")).toEqual(["task-card-title-row", "task-card-pills", "task-card-footer", "task-card-control-row"]);
+    expect(rows(tree.root, "sample-running")).toEqual(["task-card-project-stripe", "task-card-title-row", "task-card-pills", "task-card-footer", "task-card-control-row"]);
     // Minimal: the model and thinking switches are on, the provider's mark is off.
     expect(pills(tree.root)).toEqual([
       ["pill-model", "GPT-5.5 Codex"],
@@ -945,11 +948,11 @@ describe("TaskCardView rows", () => {
   it("collapses the pill row and the footer when their fields are off", async () => {
     const off = fields("minimal", { model: false, thinking: false, timer: false });
     const tree = await render(cardElement(sample("sample-running"), { fields: off, onOpen: undefined }));
-    expect(rows(tree.root, "sample-running")).toEqual(["task-card-title-row"]);
+    expect(rows(tree.root, "sample-running")).toEqual(["task-card-project-stripe", "task-card-title-row"]);
     expect(texts(tree.root)).toEqual(["Port the status ring to React Native"]);
     // Open alone takes the buttons' row, without an empty footer above it.
     await act(async () => tree.update(cardElement(sample("sample-running"), { fields: off })));
-    expect(rows(tree.root, "sample-running")).toEqual(["task-card-title-row", "task-card-control-row"]);
+    expect(rows(tree.root, "sample-running")).toEqual(["task-card-project-stripe", "task-card-title-row", "task-card-control-row"]);
   });
 
   it("names the provider in the model pill when the model is off, and drops the thinking level", async () => {
@@ -1247,8 +1250,8 @@ describe("TaskCardView rows", () => {
     expect(answer).toEqual({ height: 28, radius: 6, padding: 10, gap: 5 });
     expect(box(byLabel(tree.root, "停止").props.style)).toEqual(answer);
     await act(async () => tree.update(cardElement({ ...sample("sample-unread"), readable: true }, { onRead: () => {} })));
-    expect(box(byLabel(tree.root, "标为已读").props.style)).toEqual(answer);
-    expect(icons(byLabel(tree.root, "标为已读"))[0]).toBe("CheckCheck");
+    expect(box(byLabel(tree.root, "完成").props.style)).toEqual(answer);
+    expect(icons(byLabel(tree.root, "完成"))[0]).toBe("CheckCheck");
   });
 
   it("outlines Mark read in the unread green, and keeps it plain on a failed card", async () => {
@@ -1258,7 +1261,7 @@ describe("TaskCardView rows", () => {
       flat(button.find((node) => (node.type as unknown) === "Text").props.style).color,
     ];
     const tree = await render(cardElement({ ...sample("sample-unread"), readable: true }, { onRead: () => {} }));
-    const unread = byLabel(tree.root, "标为已读");
+    const unread = byLabel(tree.root, "完成");
     expect(flat(unread.props.style)).toMatchObject({ backgroundColor: "transparent", borderColor: tokens.card.readBorder });
     expect(colors(unread)).toEqual([tokens.card.readText, tokens.card.readText]);
     for (const theme of [LIGHT, DARK]) {
@@ -1267,7 +1270,7 @@ describe("TaskCardView rows", () => {
       expect(contrastRatio(card.readText, card.readHover)).toBeGreaterThanOrEqual(4.5);
     }
     await act(async () => tree.update(cardElement({ ...sample("sample-failed"), readable: true }, { onRead: () => {} })));
-    const failed = byLabel(tree.root, "标为已读");
+    const failed = byLabel(tree.root, "完成");
     expect(flat(failed.props.style)).toMatchObject({ backgroundColor: "transparent", borderColor: tokens.card.buttonBorder });
     expect(colors(failed)).toEqual([tokens.foreground, tokens.foreground]);
   });
@@ -1827,7 +1830,7 @@ describe("TaskCardView actions", () => {
 
   it("gives a tablet card's buttons a row of their own under the timer, Open at the right", async () => {
     const tree = await render(cardElement(sample("sample-child-1"), { onStop: () => {} }));
-    expect(rows(tree.root, "sample-child-1")).toEqual(["task-card-subtask-mark", "task-card-meta", "task-card-title-row", "task-card-pills", "task-card-footer", "task-card-control-row"]);
+    expect(rows(tree.root, "sample-child-1")).toEqual(["task-card-project-stripe", "task-card-subtask-mark", "task-card-meta", "task-card-title-row", "task-card-pills", "task-card-footer", "task-card-control-row"]);
     expect(texts(hostByTestId(tree.root, "task-card-footer"))).not.toContain("停止");
     const row = hostByTestId(tree.root, "task-card-control-row");
     expect(flat(row.props.style)).toMatchObject({ flexDirection: "row", justifyContent: "flex-end" });
@@ -1933,26 +1936,26 @@ describe("TaskCardView actions", () => {
     const onRead = vi.fn();
     const card: TaskCard = { ...sample("sample-unread"), readable: true };
     const tree = await render(cardElement(card));
-    expect(texts(tree.root)).not.toContain("标为已读");
+    expect(texts(tree.root)).not.toContain("完成");
 
     await act(async () => tree.update(cardElement({ ...card, readable: false }, { onRead })));
-    expect(texts(tree.root)).not.toContain("标为已读");
+    expect(texts(tree.root)).not.toContain("完成");
 
     await act(async () => tree.update(cardElement(card, { onRead })));
-    const button = byLabel(tree.root, "标为已读");
+    const button = byLabel(tree.root, "完成");
     expect(icons(button)).toEqual(["CheckCheck"]);
     expect(flat(button.props.style)).toMatchObject({ height: 28, borderRadius: 6, borderWidth: 0.5 });
     button.props.onPress();
     expect(onRead).toHaveBeenCalledWith(card);
 
     await act(async () => tree.update(cardElement(card, { onRead, readPending: true })));
-    const pending = byLabel(tree.root, "标为已读");
+    const pending = byLabel(tree.root, "完成");
     expect(pending.props.disabled).toBe(true);
     expect(pending.props.accessibilityState).toMatchObject({ busy: true });
     // A spinner in the icon's place; the label stays as it was.
     expect(icons(pending)).toEqual([]);
     expect(pending.findAll((node) => node.props.testID === "task-card-read-spinner").length).toBeGreaterThan(0);
-    expect(texts(pending)).toEqual(["标为已读"]);
+    expect(texts(pending)).toEqual(["完成"]);
     expect(flat(pending.props.style)).toMatchObject({ opacity: 0.6 });
     await act(async () => tree.unmount());
     renderer = null;
@@ -1960,9 +1963,9 @@ describe("TaskCardView actions", () => {
     // A phone puts it in the action bar, at Stop's touch size.
     const phone = await render(cardElement(card, { onRead, compact: true }));
     const bar = phone.root.find((node) => node.props.testID === "task-card-actions");
-    expect(texts(bar)).toEqual(["标为已读", "打开"]);
-    expect(flat(byLabel(bar, "标为已读").props.style)).toMatchObject({ flexGrow: 0 });
-    expect(flat(byLabel(bar, "标为已读").props.style)).toMatchObject({ minHeight: 32, borderRadius: 7 });
+    expect(texts(bar)).toEqual(["完成", "打开"]);
+    expect(flat(byLabel(bar, "完成").props.style)).toMatchObject({ flexGrow: 0 });
+    expect(flat(byLabel(bar, "完成").props.style)).toMatchObject({ minHeight: 32, borderRadius: 7 });
   });
 
   it("draws Stop like the details sidebar's: a rounded rectangle led by Lucide's Power", async () => {
@@ -3405,7 +3408,8 @@ describe("TaskDetailCards", () => {
     const load = vi.fn();
     const tree = await render(details(sample("sample-failed"), { firstPrompt: { prompt: { state: "ready", text }, load } }, "en"));
     const sections = tree.root.findAll((node) => typeof node.type === "string" && ["detail-prompt", "detail-location", "detail-activity", "detail-usage"].includes(node.props.testID));
-    expect(sections.map((node) => node.props.testID)).toEqual(["detail-location", "detail-prompt", "detail-activity", "detail-usage"]);
+    // The messages lead, then properties.
+    expect(sections.map((node) => node.props.testID)).toEqual(["detail-prompt", "detail-location", "detail-activity", "detail-usage"]);
     const body = hostByTestId(tree.root, "detail-prompt-text");
     const size = Math.round(tree.root.findByType(MarkdownView).props.tokens.typography.content.size * 0.9);
     expect(body.props.style).toMatchObject({ maxHeight: 10 * variantMetrics("document", size).bodyLineHeight, overflow: "hidden" });
@@ -3431,6 +3435,10 @@ describe("TaskDetailCards", () => {
     try {
       const read = (text: string) => ({ prompt: { state: "ready", text } as const, load: vi.fn() });
       const tree = await render(details(sample("sample-failed"), { touch: os !== "web", firstPrompt: read("First prompt"), humanMessage: read("Follow-up"), lastMessage: read("Latest reply") }, "en"));
+      // With a reply to read, the first prompt starts folded; its heading opens it.
+      expect(hostByTestId(tree.root, "detail-prompt-heading").props.accessibilityState.expanded).toBe(false);
+      expect(tree.root.findAll((node) => node.props.testID === "detail-prompt-text")).toHaveLength(0);
+      await act(async () => hostByTestId(tree.root, "detail-prompt-heading").props.onPress());
       for (const [id, text] of [["detail-prompt", "First prompt"], ["detail-human", "Follow-up"], ["detail-message", "Latest reply"]] as const) {
         const heading = () => hostByTestId(tree.root, `${id}-heading`);
         expect(heading().type).toBe("Pressable");
@@ -3458,6 +3466,8 @@ describe("TaskDetailCards", () => {
     await act(async () => updateEnhancerPreferences({ markdownVariant: variant }));
     try {
       const read = { prompt: { state: "ready", text: "First paragraph.\n\n- First item\n- Second item\n\nLast paragraph.\n\nMore.\n\nMore.\n\nMore." } as const, load: vi.fn() };
+      // The first prompt folds under a reply; the reader opened it.
+      setSectionClosed("prompt", false);
       for (const touch of [false, true]) {
         const tree = await render(details(sample("sample-failed"), { touch, firstPrompt: read, lastMessage: read }, "en"));
         for (const markdown of tree.root.findAllByType(MarkdownView)) {
@@ -3476,6 +3486,7 @@ describe("TaskDetailCards", () => {
   it("scales both prompt and reply prose within the compact floating sidebar scope", async () => {
     const read = { prompt: { state: "ready", text: "A short message" } as const, load: vi.fn() };
     const content = () => details(sample("sample-failed"), { touch: true, firstPrompt: read, lastMessage: read }, "en");
+    setSectionClosed("prompt", false);
     const tree = await render(content());
     const size = tree.root.findAllByType(MarkdownView)[0]!.props.tokens.typography.content.size * 0.9;
     expect(tree.root.findAllByType(MarkdownView).map((node) => node.props.size)).toEqual([Math.round(size), Math.round(size)]);
@@ -3483,12 +3494,12 @@ describe("TaskDetailCards", () => {
     expect(tree.root.findAllByType(MarkdownView).map((node) => node.props.size)).toEqual([Math.round(size * 0.9), Math.round(size * 0.9)]);
   });
 
-  it("shows the latest reply under the first prompt, copyable, with its own empty note", async () => {
+  it("shows the latest reply first, above the first prompt, copyable, with its own empty note", async () => {
     const load = vi.fn();
     const firstPrompt = { prompt: { state: "ready", text: "Fix the board" } as const, load };
     const tree = await render(details(sample("sample-failed"), { firstPrompt, lastMessage: { prompt: { state: "ready", text: "Four subagents failed." }, load } }, "en"));
     const sections = tree.root.findAll((node) => typeof node.type === "string" && ["detail-prompt", "detail-message", "detail-location"].includes(node.props.testID));
-    expect(sections.map((node) => node.props.testID)).toEqual(["detail-location", "detail-prompt", "detail-message"]);
+    expect(sections.map((node) => node.props.testID)).toEqual(["detail-message", "detail-prompt", "detail-location"]);
     expect(texts(hostByTestId(tree.root, "detail-message"))).toEqual(["Last reply", "Four subagents failed."]);
     await act(async () => byLabel(tree.root, "Copy message").props.onPress({ stopPropagation: vi.fn() }));
     expect(clipboard.copyText).toHaveBeenLastCalledWith("Four subagents failed.");
@@ -3502,6 +3513,7 @@ describe("TaskDetailCards", () => {
     const card = sample("sample-failed");
     const load = vi.fn();
     const read = (text: string) => ({ prompt: { state: "ready", text } as const, load });
+    setSectionClosed("prompt", false);
     const tree = await render(details(card, {
       firstPrompt: read("Plan in [the spec](/repo/docs/spec.md)"),
       humanMessage: read("See [notes](/repo/notes.md)"),
@@ -3554,6 +3566,7 @@ describe("TaskDetailCards", () => {
     const reply = (text: string) => ({ prompt: { state: "ready", text } as const, load });
     const running = sample("sample-running");
     const firstPrompt = reply("Original prompt");
+    setSectionClosed("prompt", false);
     const tree = await render(details(running, { firstPrompt, lastMessage: reply("Hello **wor") }, "en"));
     const markdown = () => hostByTestId(tree.root, "detail-message-text").findByType(MarkdownView);
     expect(markdown().props.streaming).toBe(true);
@@ -3587,6 +3600,7 @@ describe("TaskDetailCards", () => {
   it("draws a breathing skeleton while a timeline read is on its way", async () => {
     const load = vi.fn();
     const loading = { prompt: { state: "loading" } as const, load };
+    setSectionClosed("prompt", false);
     const tree = await render(details(sample("sample-failed"), { firstPrompt: loading, humanMessage: loading, lastMessage: loading }, "zh"));
     for (const id of ["detail-prompt", "detail-human", "detail-message"]) {
       const skeleton = hostByTestId(tree.root, `${id}-skeleton`);
@@ -3600,11 +3614,11 @@ describe("TaskDetailCards", () => {
     expect(texts(hostByTestId(tree.root, "detail-message"))).toContain("Done.");
   });
 
-  it("shows the last message a person sent between the first prompt and the latest reply", async () => {
+  it("shows the last message a person sent between the latest reply and the first prompt", async () => {
     const load = vi.fn();
     const firstPrompt = { prompt: { state: "ready", text: "Fix the board", timestamp: "2026-10-25T08:00:00Z" } as const, load };
     const lastMessage = { prompt: { state: "ready", text: "Four subagents failed." } as const, load };
-    const ids = ["detail-prompt", "detail-human", "detail-message"];
+    const ids = ["detail-message", "detail-human", "detail-prompt"];
     const shown = (tree: Awaited<ReturnType<typeof render>>) =>
       tree.root.findAll((node) => typeof node.type === "string" && ids.includes(node.props.testID)).map((node) => node.props.testID);
     const humanMessage = { prompt: { state: "ready", text: "Retry the failed ones", timestamp: "2026-10-25T09:00:00Z" } as const, load };
@@ -3616,9 +3630,9 @@ describe("TaskDetailCards", () => {
 
     // The first prompt again (one turn so far): its own section shows it.
     await act(async () => tree.update(details(sample("sample-failed"), { firstPrompt, humanMessage: { prompt: { state: "first" }, load }, lastMessage }, "en")));
-    expect(shown(tree)).toEqual(["detail-prompt", "detail-message"]);
+    expect(shown(tree)).toEqual(["detail-message", "detail-prompt"]);
     await act(async () => tree.update(details(sample("sample-failed"), { firstPrompt, humanMessage: { prompt: firstPrompt.prompt, load }, lastMessage }, "en")));
-    expect(shown(tree)).toEqual(["detail-prompt", "detail-message"]);
+    expect(shown(tree)).toEqual(["detail-message", "detail-prompt"]);
 
     await act(async () => tree.update(details(sample("sample-failed"), { firstPrompt, humanMessage: { prompt: { state: "none" }, load }, lastMessage }, "zh")));
     expect(texts(hostByTestId(tree.root, "detail-human"))).toEqual(["最后发送消息", "对话记录里没有找到发送的消息"]);
@@ -3795,7 +3809,7 @@ describe("TaskDetailCards", () => {
     const unread: TaskCard = { ...sample("sample-unread"), readable: true, openTab: false };
     const markRead = { pending: vi.fn(() => false), press: vi.fn() };
     const desk = await render(details(unread, { onOpen: vi.fn(), markRead }));
-    expect(texts(hostByTestId(desk.root, "detail-actions"))).toEqual(["打开", "标为已读"]);
+    expect(texts(hostByTestId(desk.root, "detail-actions"))).toEqual(["打开", "完成"]);
     expect(icons(hostByTestId(desk.root, "detail-read"))).toEqual(["CheckCheck"]);
     // The unread green, as on the card; a failed card's stays plain.
     expect(flat(hostByTestId(desk.root, "detail-read").props.style)).toMatchObject({ borderColor: tokens.card.readBorder });
@@ -3803,7 +3817,7 @@ describe("TaskDetailCards", () => {
     expect(markRead.press).toHaveBeenCalledWith(unread);
     const failed: TaskCard = { ...unread, status: "failed" };
     await act(async () => desk.update(details(failed, { onOpen: vi.fn(), markRead, touch: true })));
-    expect(texts(hostByTestId(desk.root, "detail-actions"))).toEqual(["标为已读", "打开"]);
+    expect(texts(hostByTestId(desk.root, "detail-actions"))).toEqual(["完成", "打开"]);
     expect(flat(hostByTestId(desk.root, "detail-read").props.style)).toMatchObject({ borderColor: tokens.card.buttonBorder });
     // Not readable, or nothing to mark it with: no button.
     await act(async () => desk.update(details({ ...unread, readable: false }, { onOpen: vi.fn(), markRead })));
@@ -3813,7 +3827,7 @@ describe("TaskDetailCards", () => {
     const bar = (card: TaskCard, more: Record<string, unknown> = {}) =>
       React.createElement(DetailActionBar, { card, theme: LIGHT, language: "zh", strings: BOARD_STRINGS.zh.sidebar, onOpen: vi.fn(), markRead, ...more });
     const phone = await render(bar(unread));
-    expect(texts(hostByTestId(phone.root, "detail-action-bar"))).toEqual(["标为已读", "打开"]);
+    expect(texts(hostByTestId(phone.root, "detail-action-bar"))).toEqual(["完成", "打开"]);
     expect(flat(hostByTestId(phone.root, "detail-bar-read").props.style)).toMatchObject({ flexGrow: 0, borderColor: tokens.card.readBorder });
     // Working: the same label, dimmed, a spinner where the icon was, no second press.
     markRead.pending.mockReturnValue(true);
@@ -4267,7 +4281,9 @@ describe("card tokens follow the host theme", () => {
       const surface = flat(hostByTestId(tree.root, "task-card-sample-child-1").props.style);
       expect(surface).toMatchObject({ backgroundColor: bg, borderColor: colors.border });
       expect(flat(hostByTestId(tree.root, "task-card-title").props.style).color).toBe(colors.foreground);
-      expect(flat(hostByTestId(tree.root, "task-card-meta-location").props.style).color).toBe(colors.foregroundMuted);
+      // The location reads in its project's colour, whatever the theme.
+      const child = sample("sample-child-1");
+      expect(flat(hostByTestId(tree.root, "task-card-meta-location").props.style).color).toBe(child.location.projectIconColor || identityColor(projectViewKey(child.location)));
       const armed = byLabel(tree.root, "确认停止");
       expect(flat(armed.props.style)).toMatchObject({ backgroundColor: "transparent", borderColor: colors.statusDanger });
       expect(flat(armed.find((node) => (node.type as unknown) === "Text").props.style).color).toBe(colors.statusDanger);
@@ -4509,11 +4525,11 @@ describe("TaskCardView long-press menu", () => {
     const tree = await render(cardElement(card, { onRead }));
     const open = () => hostByTestId(tree.root, `task-card-${card.id}`).props.onLongPress({ nativeEvent: { pageX: 140, pageY: 280 } });
     await act(async () => open());
-    await choose(tree.root, "标为已读");
+    await choose(tree.root, "完成");
     expect(onRead).toHaveBeenCalledWith(card);
     await act(async () => tree.update(cardElement(card, { onRead, readPending: true })));
     await act(async () => open());
-    expect(rows(tree.root).map((row) => row.props.accessibilityLabel)).not.toContain("标为已读");
+    expect(rows(tree.root).map((row) => row.props.accessibilityLabel)).not.toContain("完成");
   });
 
   it("does not open the menu when the board rejects a press after a swipe", async () => {

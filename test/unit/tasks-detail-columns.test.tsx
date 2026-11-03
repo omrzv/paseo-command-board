@@ -32,7 +32,7 @@ import { Icon, ScrollView } from "@getpaseo/plugin/client/react-native";
 import { taskTokens } from "../../client/tasks/cards/tokens";
 import { permissionButtons } from "../../client/tasks/actions";
 import { useLastMessage } from "../../client/tasks/data/last-message";
-import { resetSectionChoices } from "../../client/tasks/cards/detail-collapse";
+import { resetSectionChoices, setSectionClosed } from "../../client/tasks/cards/detail-collapse";
 import { BOARD_STRINGS } from "../../client/tasks/board/strings";
 import { cardStrings } from "../../client/tasks/cards/strings";
 import { previewSampleCards } from "../../client/tasks/sample-cards";
@@ -46,7 +46,8 @@ const THEME = { colors: {
   foreground: "#1b1b1f", foregroundMuted: "#6b6b75", accent: "#3b6fe0", accentForeground: "#ffffff",
   statusSuccess: "#1f8a5b", statusWarning: "#a36a00", statusDanger: "#d93636",
 } };
-const ORDER = ["detail-header", "detail-location", "detail-prompt", "detail-message", "detail-subtasks", "detail-usage", "detail-activity"];
+// The messages lead (the latest reply first), then properties.
+const ORDER = ["detail-header", "detail-message", "detail-prompt", "detail-location", "detail-subtasks", "detail-usage", "detail-activity"];
 let renderer: TestRenderer.ReactTestRenderer | undefined;
 
 beforeEach(() => {
@@ -282,6 +283,8 @@ describe("details columns", () => {
 
   it.each(["ios", "android", "web"])("scrolls the header under sticky tabs and restores each tab's reading position on %s", async (os) => {
     vi.stubGlobal("__rnMockOS", os);
+    // The first prompt folds under a reply; the reader opened it.
+    setSectionClosed("prompt", false);
     const scrollTo = vi.fn();
     await act(async () => {
       renderer = TestRenderer.create(<TaskDetailCards {...props(true)} columns={false} tabs scrollHeader onOpen={() => {}}
@@ -342,7 +345,7 @@ describe("details columns", () => {
     const info = host(root, "detail-tab-info-scroll");
     const messages = host(root, "detail-tab-messages-scroll");
     expect(order(info)).toEqual(["detail-location", "detail-subtasks", "detail-usage", "detail-activity"]);
-    expect(order(messages)).toEqual(["detail-prompt", "detail-message"]);
+    expect(order(messages)).toEqual(["detail-message", "detail-prompt"]);
     expect(host(root, "detail-tab-messages").props.accessibilityState.selected).toBe(true);
     expect(StyleSheet.flatten(host(root, "detail-tab-messages").props.style)).toMatchObject({ borderRadius: 999, backgroundColor: taskTokens(THEME).surface2 });
     expect(StyleSheet.flatten(host(root, "detail-tab-info").props.style)).toMatchObject({ borderRadius: 999, borderColor: taskTokens(THEME).card.pillBorder, backgroundColor: "transparent" });
@@ -362,10 +365,12 @@ describe("details columns", () => {
     expect(buttons.map((node) => node.props.testID)).toEqual(["detail-bar-archive", "detail-bar-open"]);
     expect(StyleSheet.flatten(buttons[0]!.props.style).borderColor).toBe(taskTokens(THEME).card.archiveBorder);
     expect(host(root, "detail-header").findAll((node) => node.props.testID === "detail-actions")).toHaveLength(0);
-    for (const id of ["detail-prompt", "detail-message", "detail-location", "detail-usage", "detail-activity"]) {
+    for (const id of ["detail-message", "detail-location", "detail-usage", "detail-activity"]) {
       const heading = host(root, id).find((node) => typeof node.type === "string" && typeof node.props.accessibilityState?.expanded === "boolean");
       expect(heading.props.accessibilityState.expanded).toBe(true);
     }
+    // No reply yet (the last message reads "none"): the first prompt stays open.
+    expect(host(root, "detail-prompt-heading").props.accessibilityState.expanded).toBe(true);
     await act(async () => buttons[0]!.props.onPress());
     await act(async () => buttons[1]!.props.onPress());
     expect(archive.press).toHaveBeenCalledWith(card.id);
@@ -398,6 +403,7 @@ describe("details columns", () => {
     const first = "First prompt. ".repeat(40);
     const human = "Latest request. ".repeat(40);
     const reply = "Live reply. ".repeat(80);
+    setSectionClosed("prompt", false);
     let emit: (event: unknown) => void = () => {};
     const refetch = vi.fn(async () => ({
       error: null, epoch: "epoch", entries: [{ timestamp: "2026-10-20T09:00:00Z", seqEnd: 0, turnId: "turn", item: { type: "assistant_message", text: reply, messageId: "message" } }],
@@ -437,7 +443,7 @@ describe("details columns", () => {
       const left = host(root, "detail-column-head");
       const right = host(root, "detail-column-sections");
       expect(order(left)).toEqual(["detail-header", "detail-location", ...(children ? ["detail-subtasks"] : [])]);
-      expect(order(right)).toEqual(["detail-prompt", "detail-message", "detail-usage", "detail-activity"]);
+      expect(order(right)).toEqual(["detail-message", "detail-prompt", "detail-usage", "detail-activity"]);
       expect(root.findAll((node) => (node.type as unknown) === "ScrollView")).toEqual([left, right]);
       for (const scroll of [left, right]) {
         expect(scroll.props.style).toMatchObject({ flex: 1 });
@@ -466,6 +472,7 @@ describe("details columns", () => {
 describe("detail message typography", () => {
   it.each(["detail-prompt", "detail-human", "detail-message"])("animates and interrupts the measured height for %s", async (id) => {
     const message = (text: string) => ({ prompt: { state: "ready" as const, text: text.repeat(80) }, load() {} });
+    setSectionClosed("prompt", false);
     await act(async () => { renderer = TestRenderer.create(<TaskDetailCards {...props(false)} columns={false}
       firstPrompt={message("First prompt. ")} humanMessage={message("Follow-up. ")} lastMessage={message("Latest reply. ")} />); });
     const body = host(renderer!.root, `${id}-text`);
@@ -484,6 +491,7 @@ describe("detail message typography", () => {
 
   it("switches immediately under reduced motion", async () => {
     motion.reduced = true;
+    setSectionClosed("prompt", false);
     const message = { prompt: { state: "ready" as const, text: "Long message. ".repeat(80) }, load() {} };
     await act(async () => { renderer = TestRenderer.create(<TaskDetailCards {...props(false)} columns={false} firstPrompt={message} />); });
     const body = host(renderer!.root, "detail-prompt-text");
@@ -503,6 +511,7 @@ describe("detail message typography", () => {
     ["trailing blank lines", Array(10).fill("line").join("\n") + "\n\n", false],
   ])("uses the long-message threshold for all three messages: %s", async (_name, text, long) => {
     const message = (suffix: string) => ({ prompt: { state: "ready" as const, text, timestamp: suffix }, load() {} });
+    setSectionClosed("prompt", false);
     await act(async () => { renderer = TestRenderer.create(<TaskDetailCards {...props(false)} columns={false}
       firstPrompt={message("2026-10-20T08:00:00Z")} humanMessage={message("2026-10-20T08:01:00Z")} lastMessage={message("2026-10-20T08:02:00Z")} />); });
     for (const id of ["detail-prompt", "detail-human", "detail-message"]) {
@@ -519,6 +528,7 @@ describe("detail message typography", () => {
       humanMessage: message("Follow-up. "),
       lastMessage: message("Latest reply. "),
     };
+    setSectionClosed("prompt", false);
     for (const [ui, content, factor] of [[14, 15, 1], [14, 16, 1], [18, 16, 1], [18, 20, 1], [18, 20, 0.9]] as const) {
       const theme = { ...THEME, typography: { fontSize: { ui, content } } };
       const size = Math.round(content * 0.9 * factor);
@@ -568,6 +578,8 @@ describe("detail message times", () => {
     for (const language of ["zh", "en"] as const) {
       for (const columns of [false, true]) {
         resetSectionChoices();
+        // The first prompt folds under a reply; the reader opened it.
+        setSectionClosed("prompt", false);
         const detailProps: TaskDetailCardsProps = {
           ...props(true), language, strings: BOARD_STRINGS[language].sidebar, columns, touch: os !== "web",
           firstPrompt: { prompt: { state: "ready", text: "First prompt", timestamp: first.toISOString() }, load() {} },

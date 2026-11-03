@@ -148,14 +148,14 @@ describe("mobile card action feedback", () => {
     }
     const card = { ...sample("sample-unread"), readable: true };
     await act(async () => renderer.update(<TaskCardView {...props} card={card} />));
-    expect(style(button("Mark as read"), true).backgroundColor).toBe("transparent");
-    expect(style(button("Mark as read"), true).boxShadow).toBe(tokens.card.buttonShadowHover);
-    expect(style(button("Mark as read"), false).backgroundColor).toBe("transparent");
-    expect(style(button("Mark as read"), false).boxShadow).toBeFalsy();
+    expect(style(button("Done"), true).backgroundColor).toBe("transparent");
+    expect(style(button("Done"), true).boxShadow).toBe(tokens.card.buttonShadowHover);
+    expect(style(button("Done"), false).backgroundColor).toBe("transparent");
+    expect(style(button("Done"), false).boxShadow).toBeFalsy();
     await act(async () => renderer.update(<TaskCardView {...props} card={card} readPending />));
-    expect(button("Mark as read").props.disabled).toBe(true);
-    expect(style(button("Mark as read"), true).backgroundColor).toBe("transparent");
-    expect(style(button("Mark as read"), true).boxShadow).toBeFalsy();
+    expect(button("Done").props.disabled).toBe(true);
+    expect(style(button("Done"), true).backgroundColor).toBe("transparent");
+    expect(style(button("Done"), true).boxShadow).toBeFalsy();
   });
 });
 

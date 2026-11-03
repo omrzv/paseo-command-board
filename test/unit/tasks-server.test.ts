@@ -487,7 +487,7 @@ describe("Tasks server read RPC", () => {
       handlers = await registerHandlers(noHost);
       await expect(invoke(handlers, "tasks.read", { agentIds: ["agent-a"] })).resolves.toEqual({ ok: false, error: "Could not reach the Paseo daemon." });
       // A read that did not take leaves no mark.
-      await expect(invoke(handlers, "tasks.reads", {})).resolves.toEqual({ reads: [] });
+      await expect(invoke(handlers, "tasks.reads", {})).resolves.toMatchObject({ reads: [] });
     } finally {
       vi.useRealTimers();
     }

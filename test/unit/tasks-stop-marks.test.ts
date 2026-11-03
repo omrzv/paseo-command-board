@@ -127,11 +127,12 @@ describe("tasks stop marks on the server", () => {
       before() { return () => {}; },
       handle(contract: { name: string }, handler: (input: unknown) => Promise<unknown>) { handlers.set(contract.name, handler); },
     } as unknown as PluginServerContext;
-    registerTasksServer(server, createStopMarks(path, now), undefined, undefined, createStopMarks(readsPath(), now));
+    registerTasksServer(server, createStopMarks(path, now), undefined, undefined, createStopMarks(readsPath(), now), undefined, createStopMarks(join(dir, "tasks-reviews.json"), now));
     return {
       stopped: async () => ((await handlers.get("tasks.stopped")!({})) as { stops: Array<{ agentId: string }> }).stops.map((stop) => stop.agentId),
       reads: async () => ((await handlers.get("tasks.reads")!({})) as { reads: Array<{ agentId: string }> }).reads.map((read) => read.agentId),
-      event: async (name: string, id: string) => { await events.get(name)!({ agent: { id } }); },
+      pending: async () => ((await handlers.get("tasks.reads")!({})) as { pending: Array<{ agentId: string }> }).pending.map((review) => review.agentId),
+      event: async (name: string, id: string, extra: Record<string, unknown> = {}) => { await events.get(name)!({ agent: { id }, ...extra }); },
     };
   }
 
@@ -160,5 +161,17 @@ describe("tasks stop marks on the server", () => {
     await server.event("agent.turn_started", "agent-a");
     await server.event("agent.archived", "agent-c");
     expect(await server.reads()).toEqual(["agent-b"]);
+  });
+
+  it("keeps a completed turn pending review until a new turn, Done or archive; opening the tab is not enough", async () => {
+    const server = setup();
+    await server.event("agent.turn_ended", "agent-a", { outcome: { kind: "completed" } });
+    await server.event("agent.turn_ended", "agent-b", { outcome: { kind: "completed" } });
+    await server.event("agent.turn_ended", "agent-c", { outcome: { kind: "completed" } });
+    await server.event("agent.turn_ended", "agent-failed", { outcome: { kind: "failed", error: { message: "x" } } });
+    expect(await server.pending()).toEqual(["agent-a", "agent-b", "agent-c"]);
+    await server.event("agent.turn_started", "agent-a");
+    await server.event("agent.archived", "agent-c");
+    expect(await server.pending()).toEqual(["agent-b"]);
   });
 });

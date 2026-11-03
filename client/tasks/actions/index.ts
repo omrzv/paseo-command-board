@@ -557,7 +557,7 @@ export function useReadControl(options: {
 
   const failed = useCallback((detail: string) => {
     const zh = latest.current.language === "zh";
-    latest.current.toast.error(zh ? `标为已读失败：${detail}` : `Could not mark as read: ${detail}`);
+    latest.current.toast.error(zh ? `标为已读失败：${detail}` : `Could not mark as done: ${detail}`);
   }, []);
 
   const settle = useCallback((agentId: string) => {

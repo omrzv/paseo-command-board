@@ -205,8 +205,10 @@ export interface TaskChild {
 export interface TaskCard {
   availability?: TaskAvailability;
   id: string;
-  /** The agent's title, else a fallback such as the first prompt line or "Untitled". */
+  /** The model-written short description when there is one, else the agent's title, else a fallback such as the first prompt line or "Untitled". */
   title: string;
+  /** The model-written view (`insights.get`): the agent's own title it replaced, and the two-sentence summary. */
+  insight?: { agentTitle: string; summary: string; generatedAt: number } | null;
   lane: LaneId;
   status: StatusKind;
   /** Provider id as the daemon names it: "claude", "codex", ... */

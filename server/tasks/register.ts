@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { delimiter, dirname, join } from "node:path";
 import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
 import { TASKS_SETTINGS } from "../../shared/tasks-settings";
-import { createStopMarks, readMarksPath, stopMarksPath } from "./stop-marks";
+import { createStopMarks, readMarksPath, reviewMarksPath, stopMarksPath } from "./stop-marks";
 import { connectHostDaemon, createSubagentWatch, hasHostDaemon, type HostDaemon, type SubagentWatch } from "./provider-subagents";
 import { iconThemeColor } from "./icon-color";
 import { createSessionTokenReader, type SessionTokenReader } from "./session-tokens";
@@ -337,6 +337,7 @@ export function registerTasksServer(
   host: HostDaemonAccess = hostDaemon,
   reads = createStopMarks(readMarksPath()),
   tokens: SessionTokenReader = createSessionTokenReader(),
+  reviews = createStopMarks(reviewMarksPath()),
 ): void {
   server.registerSettings(TASKS_SETTINGS);
   const titleSettings = registerTitleGeneration(server, (agentId, title) => renameAgent(host, agentId, title), host.available, async (agentId) => {
@@ -355,7 +356,11 @@ export function registerTasksServer(
   // A new turn means a new prompt: the agent is no longer "stopped manually", nor read.
   server.on("agent.turn_started", async ({ agent }, context) => {
     void subagents.ensure(context?.paseo);
-    await Promise.all([stops.clear(agent.id), reads.clear(agent.id)]);
+    await Promise.all([stops.clear(agent.id), reads.clear(agent.id), reviews.clear(agent.id)]);
+  });
+  // A completed turn waits for a person until they reply, mark it done or archive it.
+  server.on("agent.turn_ended", async ({ agent, outcome }) => {
+    if (outcome.kind === "completed") await reviews.mark(agent.id);
   });
   // A session opened from storage replays its subagents without an update; read its list after.
   server.before("agent.session_open", ({ request }, context) => {
@@ -363,7 +368,7 @@ export function registerTasksServer(
   });
   server.on("agent.archived", async ({ agent }) => {
     subagents.dropParent(agent.id);
-    await Promise.all([stops.clear(agent.id), reads.clear(agent.id)]);
+    await Promise.all([stops.clear(agent.id), reads.clear(agent.id), reviews.clear(agent.id)]);
   });
   server.handle(tasksStoppedRpc, async () => ({ stops: await stops.list() }));
   server.handle(tasksSessionTokensRpc, async ({ agentId }, context) => {
@@ -376,7 +381,12 @@ export function registerTasksServer(
   server.handle(tasksCapabilitiesRpc, async () => ({ stop: (await resolveCli()) !== null, read: host.available() }));
   server.handle(tasksReadRpc, async ({ agentIds }) => {
     const result = await markRead(host, agentIds);
-    if (result.ok) for (const agentId of agentIds) await reads.mark(agentId);
+    if (result.ok) {
+      for (const agentId of agentIds) {
+        await reads.mark(agentId);
+        await reviews.clear(agentId);
+      }
+    }
     return result;
   });
   server.handle(tasksLabelsRpc, async () => ({ labels: await readLabels(host) }));
@@ -388,6 +398,7 @@ export function registerTasksServer(
   server.handle(tasksProjectIconsRpc, async ({ projectIds }) => ({ icons: await readProjectIcons(host, projectIds) }));
   server.handle(tasksReadsRpc, async () => ({
     reads: (await reads.list()).map(({ agentId, stoppedAt }) => ({ agentId, readAt: stoppedAt })),
+    pending: (await reviews.list()).map(({ agentId, stoppedAt }) => ({ agentId, endedAt: stoppedAt })),
   }));
   server.handle(tasksStopRpc, async ({ agentIds }) => {
     const cli = await resolveCli();

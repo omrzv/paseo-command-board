@@ -627,6 +627,7 @@ function DetailsSheetBody(props: { card: TaskCard; board: BoardController; theme
           unarchive={board.unarchive.available ? board.unarchive : null}
           archive={board.archive}
           markRead={board.read.available ? board.read : null}
+          onReply={(text: string) => board.paseo.agents.ref(card.id).send(text)}
           onScrollEdge={setContentUnderBar}
         />
       </View>

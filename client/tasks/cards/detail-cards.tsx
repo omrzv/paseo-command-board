@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
-import { Animated, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle, type ViewStyle } from "react-native";
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, useWindowDimensions, type LayoutChangeEvent, type TextStyle, type ViewStyle } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useRpc } from "@getpaseo/plugin/client";
 import { Icon, ScrollView as SheetScrollView, useToast } from "@getpaseo/plugin/client/react-native";
@@ -193,6 +193,8 @@ export interface TaskDetailCardsProps extends TimeSource {
   archive?: { pending(agentId: string): boolean; press(agentId: string): void } | null;
   /** Mark read for a card in review, as on its card; absent where this host cannot. */
   markRead?: DetailRead | null;
+  /** Sends a message to the agent, as typing in its tab does; absent leaves the reply box out. */
+  onReply?(text: string): Promise<void>;
   /** The sections scroll under the fixed header (the sidebar); else the card grows with them (the sheet). */
   scrollBody?: boolean;
   /**
@@ -257,7 +259,8 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
   if (metadataHits.some((hit) => hit.field !== "title" && hit.field !== "label")) matching.push("properties");
   if (prompt?.state === "ready" && searchRanges(prompt.text, query).length) matching.push("prompt");
   const searchChoices = useSearchSectionChoices(card.id, query, matching);
-  const { order, closed } = detailSections(card, !!props.firstPrompt, !!props.lastMessage, !!props.humanMessage);
+  // The first prompt folds once there is a reply to read instead; with none yet, it stays open.
+  const { order, closed } = detailSections(card, !!props.firstPrompt, !!props.lastMessage, !!props.humanMessage, !!props.lastMessage && props.lastMessage.prompt.state !== "none");
   // Two columns: properties precede subtasks under the header; the other sections sit on the right.
   const leftSections: DetailSection[] = props.columns ? order.filter((section) => section === "properties" || section === "subtasks") : [];
   const rightOrder = order.filter((section) => !leftSections.includes(section));
@@ -356,7 +359,11 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
             {...detailScrollProps("inset")}
             testID="detail-tab-short-scroll"
           >
-            <DetailHeader {...props} actions={false} m={m} tokens={tokens} now={now} time={time} gutter={gutter} />
+            {/* One child: the tab bar must stay at sticky index 1. */}
+            <View>
+              <DetailHeader {...props} actions={false} m={m} tokens={tokens} now={now} time={time} gutter={gutter} />
+              <InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
+            </View>
             {tabBar}
             {(["info", "messages"] as const).map((id) => (
               <View
@@ -378,7 +385,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
           </SheetScrollView>
         ) : (
           <>
-            <DetailHeader {...props} actions={false} m={m} tokens={tokens} now={now} time={time} />
+            <DetailHeader {...props} actions={false} m={m} tokens={tokens} now={now} time={time} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
             {tabBar}
             <View style={{ flex: 1, minHeight: 0, display: tab === "info" ? "flex" : "none" }}>
               <ScrollView key={`${card.id}-info`} style={{ flex: 1 }} {...detailScrollProps("inset")} scrollEventThrottle={16} onScroll={(event) => publishBody("info", scrollEdgePatch(event.nativeEvent))} onLayout={(event) => publishBody("info", { viewport: event.nativeEvent.layout.height })} onContentSizeChange={(_width, height) => publishBody("info", { content: height })} testID="detail-tab-info-scroll">
@@ -403,7 +410,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
         {/* Plain views share the width (a ScrollView's own flex is not honoured on iOS); each scroll fills its half. */}
         <View style={{ flex: 1.2, minWidth: 0 }}>
           <ScrollView key={`${card.id}-head`} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 4 }} {...detailScrollProps("inset")} testID="detail-column-head">
-            <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} gutter={gutter} />
+            <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} gutter={gutter} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
             {leftSections.map((section) => sectionView(section, true))}
           </ScrollView>
         </View>
@@ -419,7 +426,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
   }
   return (
     <View testID={props.testID ?? "detail-cards"} style={[detailCardFrame(tokens), props.scrollBody ? { flexShrink: 1, minHeight: 0 } : null]}>
-      <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} />
+      <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
       {props.scrollBody ? (
         <ScrollView key={card.id} style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 4 }} {...detailScrollProps("inset")} testID="detail-body-scroll">
           {sections}
@@ -475,6 +482,81 @@ function scrollEdgeShadow(isDark: boolean, direction: "down" | "up"): string {
 }
 
 /** `gutter`: the room a scroller's scrollbar takes from the right padding (0 outside one). */
+/** The model's two sentences on the task, under the header: what it is, and where it stands. */
+function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics; language: TasksLanguage }) {
+  const insight = props.card.insight;
+  if (!insight?.summary) return null;
+  const { tokens, m } = props;
+  return (
+    <View testID="detail-insight" style={{ marginHorizontal: m.padH, marginTop: 2, marginBottom: 8, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: withAlpha(tokens.accent, tokens.isDark ? 0.14 : 0.08), borderLeftWidth: 3, borderLeftColor: tokens.accent }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 3 }}>
+        <Icon name="Sparkles" size={12} color={tokens.accentText} />
+        <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.accentText }}>{props.language === "zh" ? "摘要" : "Summary"}</Text>
+      </View>
+      <Text selectable style={{ fontSize: F.sm, lineHeight: Math.round(F.sm * 1.45), color: tokens.foreground }}>{insight.summary}</Text>
+      {insight.agentTitle && insight.agentTitle !== props.card.title ? (
+        <Text numberOfLines={1} style={{ marginTop: 4, fontSize: F.sm, color: tokens.foregroundMuted }}>{insight.agentTitle}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+/** A message to the agent from the details: Enter (or the button) sends, Shift+Enter breaks the line on web. */
+function ReplyBox(props: { onReply(text: string): Promise<void>; tokens: TaskTokens; language: TasksLanguage; running: boolean }) {
+  const { tokens } = props;
+  const zh = props.language === "zh";
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [height, setHeight] = useState(36);
+  const send = useCallback(() => {
+    const message = text.trim();
+    if (!message || sending) return;
+    setSending(true);
+    props.onReply(message).then(() => {
+      setText("");
+      setHeight(36);
+      toast.show?.(zh ? "已发送" : "Sent");
+    }, (error: unknown) => {
+      toast.error(zh ? `发送失败：${error instanceof Error ? error.message : String(error)}` : `Could not send: ${error instanceof Error ? error.message : String(error)}`);
+    }).finally(() => setSending(false));
+  }, [text, sending, props.onReply, toast, zh]);
+  const empty = text.trim().length === 0;
+  return (
+    <View testID="detail-reply" style={{ marginTop: 8, marginHorizontal: 6, flexDirection: "row", alignItems: "flex-end", gap: 6, padding: 4, borderRadius: 10, borderWidth: 1, borderColor: tokens.card.border, backgroundColor: tokens.card.background }}>
+      <TextInput
+        testID="detail-reply-input"
+        value={text}
+        onChangeText={setText}
+        editable={!sending}
+        multiline
+        placeholder={props.running ? (zh ? "回复（将在当前轮次后处理）…" : "Reply (the agent takes it after this turn)…") : (zh ? "回复这个任务…" : "Reply to this task…")}
+        placeholderTextColor={tokens.foregroundMuted}
+        onContentSizeChange={(event) => setHeight(Math.min(160, Math.max(36, Math.ceil(event.nativeEvent.contentSize.height))))}
+        onKeyPress={Platform.OS === "web" ? (event) => {
+          const native = event.nativeEvent as unknown as { key: string; shiftKey?: boolean; isComposing?: boolean };
+          if (native.key === "Enter" && !native.shiftKey && !native.isComposing) {
+            (event as unknown as { preventDefault?(): void }).preventDefault?.();
+            send();
+          }
+        } : undefined}
+        style={{ flex: 1, minHeight: 36, height, paddingHorizontal: 8, paddingVertical: 8, fontSize: F.sm, color: tokens.foreground, outlineStyle: "none" } as unknown as TextStyle}
+      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={zh ? "发送" : "Send"}
+        {...tipProps(zh ? "发送 (Enter)" : "Send (Enter)")}
+        disabled={empty || sending}
+        onPress={send}
+        testID="detail-reply-send"
+        style={{ width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: empty ? "transparent" : tokens.accent, opacity: sending ? 0.6 : 1 }}
+      >
+        <Icon name={sending ? "Loader" : "ArrowUp"} size={16} color={empty ? tokens.foregroundMuted : "#ffffff"} />
+      </Pressable>
+    </View>
+  );
+}
+
 type Inner = TaskDetailCardsProps & { m: Metrics; tokens: TaskTokens; now: number; time: TimeSource; gutter?: number };
 
 function DetailTab(props: { id: "info" | "messages"; selected: boolean; tokens: TaskTokens; touch: boolean; label: string; onPress(): void }) {
@@ -1000,7 +1082,10 @@ function Section(props: Inner & { section: DetailSection; closed: boolean; divid
         ) : section === "human" ? (
           <TimelineTextBody {...props} read={props.humanMessage} id="detail-human" none={words.humanNone} error={words.humanError} copyLabel={words.copyHuman} copyToast="Copy sent message" />
         ) : section === "message" ? (
-          <TimelineTextBody {...props} read={props.lastMessage} id="detail-message" none={words.messageNone} error={words.messageError} copyLabel={words.copyMessage} copyToast="Copy message" flash />
+          <>
+            <TimelineTextBody {...props} read={props.lastMessage} id="detail-message" none={words.messageNone} error={words.messageError} copyLabel={words.copyMessage} copyToast="Copy message" flash />
+            {props.onReply && !card.subagent && !card.archived ? <ReplyBox key={card.id} onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
+          </>
         ) : section === "properties" ? (
           <Properties {...props} />
         ) : section === "subtasks" ? (

@@ -63,7 +63,15 @@ export const tasksReadRpc = defineRpc({
 export const tasksReadsRpc = defineRpc({
   name: "tasks.reads",
   input: z.object({}),
-  output: z.object({ reads: z.array(z.object({ agentId: z.string(), readAt: z.string() })) }),
+  output: z.object({
+    reads: z.array(z.object({ agentId: z.string(), readAt: z.string() })),
+    /**
+     * Agents whose last turn completed and that nobody handled yet: they stay
+     * in review after their tab is opened, until a reply, Done or archive.
+     * Missing from older servers.
+     */
+    pending: z.array(z.object({ agentId: z.string(), endedAt: z.string() })).optional(),
+  }),
 });
 
 /**

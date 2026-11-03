@@ -51,7 +51,7 @@ import { BOARD_STRINGS } from "../../client/tasks/board/strings";
 import type { BoardController } from "../../client/tasks/board/use-board";
 import { BoardTips, CardHints } from "../../client/tasks/cards/card-hints";
 import { TASK_MONO } from "../../client/tasks/typography";
-import { resetSectionChoices } from "../../client/tasks/cards/detail-collapse";
+import { resetSectionChoices, setSectionClosed } from "../../client/tasks/cards/detail-collapse";
 import { TaskDetailCards, type TaskDetailCardsProps } from "../../client/tasks/cards/detail-cards";
 import { cardStrings } from "../../client/tasks/cards/strings";
 import { LANE_ORDER } from "../../client/tasks/model";
@@ -353,6 +353,8 @@ describe("sidebar action tips", () => {
     const props = details(language);
     const words = cardStrings(language);
     props.card = { ...props.card, children: Array.from({ length: 12 }, (_, index) => ({ ...props.card.children[0]!, id: `child-${index}` })) };
+    // The first prompt folds under a reply; the reader opened it.
+    setSectionClosed("prompt", false);
     const root = await render(<TaskDetailCards {...props} />);
     expect(tip(host(root, "detail-subtasks-more"))).toBe(words.details.subtasksShowAll(12));
     await act(async () => host(root, "detail-subtasks-more").props.onPress());

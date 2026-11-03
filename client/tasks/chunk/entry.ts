@@ -1,7 +1,8 @@
+import { insightsGetRpc } from "../../../shared/insights-rpc";
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { lastTurnsRpc } from "../../../shared/turn-usage-rpc";
 import { tasksLabelsRpc, tasksProjectIconsRpc, tasksReadsRpc, tasksSessionTokensRpc, tasksSubagentTimelineRpc, tasksSubagentsRpc } from "../../../shared/tasks-rpc";
-import { setLabelDefinitionsLoader, setLastTurnLoader, setProjectIconsLoader, setReadMarksLoader, setSubagentLoader } from "../data";
+import { setInsightsLoader, setLabelDefinitionsLoader, setLastTurnLoader, setProjectIconsLoader, setReadMarksLoader, setSubagentLoader } from "../data";
 import { setSessionTokensLoader } from "../data/session-tokens";
 import { setSubagentTimelineLoader } from "../data/subagent-timeline";
 import { conversationSearchRpc } from "../../../shared/conversation-search";
@@ -28,8 +29,10 @@ export function startTasksData(client: PluginClientContext): () => void {
   setLastTurnLoader((agentIds) => client.rpc(lastTurnsRpc, { agentIds }).then((result) => result.turns));
   // Provider subagents (Claude's Agent tool) come from the server, which reads them off the daemon.
   setSubagentLoader((since) => client.rpc(tasksSubagentsRpc, since === undefined ? {} : { since }));
-  // Cards marked read from a board, failures included: the server keeps the marks.
-  setReadMarksLoader(() => client.rpc(tasksReadsRpc, {}).then((result) => result.reads));
+  // Cards marked read from a board, failures included, and finished turns nobody handled yet: the server keeps both.
+  setReadMarksLoader(() => client.rpc(tasksReadsRpc, {}));
+  // Short task descriptions and two-sentence summaries the server's model wrote when turns completed.
+  setInsightsLoader((agentIds) => client.rpc(insightsGetRpc, { agentIds }).then((result) => result.insights));
   // Label colors as Paseo's sidebar draws them, for a host whose API lists no label definitions.
   setLabelDefinitionsLoader(() => client.rpc(tasksLabelsRpc, {}).then((result) => result.labels));
   // Project icons as Paseo's sidebar draws them, for a host whose API has no icon call.
@@ -43,6 +46,7 @@ export function startTasksData(client: PluginClientContext): () => void {
     setLastTurnLoader(null);
     setSubagentLoader(null);
     setReadMarksLoader(null);
+    setInsightsLoader(null);
     setLabelDefinitionsLoader(null);
     setProjectIconsLoader(null);
     setSessionTokensLoader(null);

@@ -36,16 +36,18 @@ describe("details card model", () => {
     expect(detailSections(sample("sample-input"))).toEqual({ order: ["properties", "usage", "activity"], closed: [] });
     expect(detailSections(sample("sample-failed"))).toEqual({ order: ["properties", "activity", "usage"], closed: [] });
     expect(detailSections(sample("sample-done"))).toEqual({ order: ["properties", "usage", "activity"], closed: [] });
-    // The first prompt follows properties when the details can read it.
-    expect(detailSections(sample("sample-running"), true).order).toEqual(["properties", "prompt", "subtasks", "usage", "activity"]);
-    expect(detailSections(sample("sample-failed"), true).order).toEqual(["properties", "prompt", "activity", "usage"]);
-    // The latest reply follows it.
-    expect(detailSections(sample("sample-failed"), true, true).order).toEqual(["properties", "prompt", "message", "activity", "usage"]);
+    // The messages lead, then properties: the first prompt when the details can read it.
+    expect(detailSections(sample("sample-running"), true)).toEqual({ order: ["prompt", "properties", "subtasks", "usage", "activity"], closed: [] });
+    expect(detailSections(sample("sample-failed"), true).order).toEqual(["prompt", "properties", "activity", "usage"]);
+    // The latest reply comes first, and folds the first prompt.
+    expect(detailSections(sample("sample-failed"), true, true)).toEqual({ order: ["message", "prompt", "properties", "activity", "usage"], closed: ["prompt"] });
     // The last message a person sent sits between them.
-    expect(detailSections(sample("sample-failed"), true, true, true).order).toEqual(["properties", "prompt", "human", "message", "activity", "usage"]);
+    expect(detailSections(sample("sample-failed"), true, true, true).order).toEqual(["message", "human", "prompt", "properties", "activity", "usage"]);
+    // A reply without a readable first prompt folds nothing.
+    expect(detailSections(sample("sample-failed"), false, true)).toEqual({ order: ["message", "properties", "activity", "usage"], closed: [] });
     // A provider subagent's card has no usage or activity of its own.
     const subagent = { ...sample("sample-running"), children: [], subagent: { subtitle: null } };
-    expect(detailSections(subagent, true, true).order).toEqual(["properties", "prompt", "message"]);
+    expect(detailSections(subagent, true, true).order).toEqual(["message", "prompt", "properties"]);
   });
 
   it("splits Codex's cached input out of its input, and leaves Claude's as reported", () => {

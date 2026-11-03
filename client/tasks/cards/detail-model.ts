@@ -29,7 +29,7 @@ export function detailHero(card: TaskCard): DetailHero {
  * last message a person sent and the agent's latest reply when the details
  * can read them.
  */
-export function detailSections(card: TaskCard, prompt = false, message = false, human = false): { order: DetailSection[]; closed: DetailSection[] } {
+export function detailSections(card: TaskCard, prompt = false, message = false, human = false, foldPrompt = message): { order: DetailSection[]; closed: DetailSection[] } {
   const hero = detailHero(card);
   let order: DetailSection[];
   if (hero === "turn") order = ["subtasks", "usage", "activity"];
@@ -39,10 +39,14 @@ export function detailSections(card: TaskCard, prompt = false, message = false, 
   if (card.children.length === 0) order = order.filter((section) => section !== "subtasks");
   // A provider subagent's card carries no usage or activity of its own.
   if (card.subagent) order = [];
-  if (message) order = ["message", ...order];
-  if (human) order = ["human", ...order];
-  if (prompt) order = ["prompt", ...order];
-  return { order: ["properties", ...order], closed: [] };
+  // What matters first is where the task stands: the agent's latest reply
+  // (with the reply box under it), then what the person last said, then the
+  // first prompt, folded once there is a reply to read. Properties follow.
+  const messages: DetailSection[] = [];
+  if (message) messages.push("message");
+  if (human) messages.push("human");
+  if (prompt) messages.push("prompt");
+  return { order: [...messages, "properties", ...order], closed: message && prompt && foldPrompt ? ["prompt"] : [] };
 }
 
 /** The colour each status draws with in the charts: the board's status band, done in grey. */

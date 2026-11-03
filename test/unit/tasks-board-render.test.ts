@@ -3257,7 +3257,10 @@ describe("Tasks board, desktop refresh button", () => {
     const area = hostsById("tasks-board-area")[0]!;
     const filterBar = hostsById("filter-bar")[0];
     const layer = StyleSheet.flatten(toolbar.props.style).zIndex ?? 0;
-    expect(hostParentOf(toolbar)).toBe(hostParentOf(area));
+    // The lanes area sits in a row with the Slack column; that row is the toolbar's sibling and draws no layer of its own.
+    const areaRow = hostParentOf(area)!;
+    expect(hostParentOf(toolbar) === hostParentOf(areaRow)).toBe(true);
+    expect(StyleSheet.flatten(areaRow.props.style).zIndex ?? 0).toBe(0);
     expect(layer).toBeGreaterThan(StyleSheet.flatten(area.props.style).zIndex ?? 0);
     if (width === 1600) {
       expect(filterBar).toBeDefined();
@@ -4233,8 +4236,9 @@ describe("Tasks board, tablet filters", () => {
     const title = renderer!.root.findAll((node) => (node.type as unknown) === "Text" && node.props.testID === "task-card-title")[0]!;
     const meta = renderer!.root.findAll((node) => (node.type as unknown) === "Text" && node.props.testID === "task-card-meta-location")[0]!;
     const lane = renderer!.root.find((node) => (node.type as unknown) === "Pressable" && node.props.testID === "lane-header-running");
-    expect(font(title)).toBe(font(meta));
-    expect(font(lane.findAll((node) => (node.type as unknown) === "Text")[0]!)).toBe(font(meta));
+    // The location reads a step up from the meta row's size, in its project's colour.
+    expect(font(title)).toBe(font(meta) - 1);
+    expect(font(lane.findAll((node) => (node.type as unknown) === "Text")[0]!)).toBe(font(title));
     expect(StyleSheet.flatten(title.props.style).lineHeight).toBeGreaterThan(StyleSheet.flatten(meta.props.style).lineHeight);
   });
 

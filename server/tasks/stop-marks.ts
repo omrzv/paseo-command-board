@@ -26,6 +26,16 @@ export function readMarksPath(): string {
 }
 
 /**
+ * The review marks (`tasks.reads`' `pending`): agents whose turn completed and
+ * that nobody has handled yet. A mark goes when the agent starts a new turn
+ * (someone replied), is marked done (`tasks.read`) or is archived; opening its
+ * tab does not clear it, unlike the daemon's attention.
+ */
+export function reviewMarksPath(): string {
+  return join(pluginDataDir(), "tasks-reviews.json");
+}
+
+/**
  * The agents stopped through `tasks.stop`, with when, oldest first. Kept in
  * memory and mirrored to one JSON file, so a daemon restart or a plugin
  * reload keeps them. The file is read once; it is written (atomically, one

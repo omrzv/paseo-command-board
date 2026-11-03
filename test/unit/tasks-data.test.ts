@@ -761,6 +761,18 @@ describe("Tasks data store", () => {
     expect(withReadMark({ ...card, lane: "running", status: "running" }, marked, 0).readable).toBeFalsy();
   });
 
+  it("keeps a finished card in review while its review is pending, until it is marked done", () => {
+    const done = { ...sampleCards(Date.parse("2026-10-22T10:00:00.000Z")).find((sample) => sample.lane === "done" && !sample.parent)! };
+    const ended = Date.parse("2026-10-22T09:30:00.000Z");
+    expect(withReadMark(done, undefined, Number.NEGATIVE_INFINITY, ended)).toMatchObject({ lane: "review", status: "unread", readable: true });
+    // Done after the turn ended lets it go.
+    expect(withReadMark(done, ended + 1, Number.NEGATIVE_INFINITY, ended)).toMatchObject({ lane: "done", status: "done" });
+    // No pending review: unchanged.
+    expect(withReadMark(done, undefined, Number.NEGATIVE_INFINITY)).toMatchObject({ lane: "done" });
+    // A subtask is reviewed through its parent.
+    expect(withReadMark({ ...done, parent: { id: "p", title: "Parent", missing: false, archived: false } }, undefined, Number.NEGATIVE_INFINITY, ended).lane).toBe("done");
+  });
+
   it.each(["feature/tasks", "feature-tasks"])("hides a workspace name that repeats branch %s", async (workspaceName) => {
     const fake = createFakePaseo({
       agents: [activeAgent("a", { status: "running" })],

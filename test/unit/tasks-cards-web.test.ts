@@ -583,7 +583,7 @@ describe("TaskCardView on web", () => {
     const renderer = await render(element());
     const root = renderer.root;
     const readButton = () =>
-      root.findAll((node) => typeof node.type === "string" && node.props.accessibilityLabel === "标为已读")[0];
+      root.findAll((node) => typeof node.type === "string" && node.props.accessibilityLabel === "完成")[0];
     const overlay = () => root.findAll((node) => typeof node.type === "string" && node.props.testID === "task-card-read-overlay")[0];
     expect(readButton()).toBeUndefined();
     expect(nestedButtons(root)).toEqual([]);
@@ -791,9 +791,9 @@ describe("TaskCardView right-click menu", () => {
     const card = { ...sampleCards(NOW).find((item) => item.id === "sample-unread")!, readable: true };
     const unread = await render(React.createElement(TaskCardView, props("sample-unread", { card, onRead })));
     await act(async () => contextMenus.get("task-card-sample-unread")!({ x: 0, y: 0 }, null));
-    expect(rows(unread.root)).toContain("标为已读");
+    expect(rows(unread.root)).toContain("完成");
     expect(rows(unread.root)).not.toContain("停止");
-    await choose(unread.root, "标为已读");
+    await choose(unread.root, "完成");
     expect(onRead).toHaveBeenCalledTimes(1);
     await act(async () => unread.unmount());
 
