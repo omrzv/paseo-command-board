@@ -481,7 +481,9 @@ export function useBoard(
       onArchive: (agentId) => write(agentId, "archive", () => latest.current.archive.press(agentId)),
       onPermission: (card, button) => {
         if (button.kind === "open") {
-          open(card.id);
+          // A question with its options is answered in the details, on the board; anything else in the tab.
+          if (card.permission?.kind === "question" && card.permission.questions?.length && handlers.current) handlers.current.details(card);
+          else open(card.id);
           return;
         }
         const requestId = card.permission?.requestId;

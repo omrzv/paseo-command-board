@@ -100,6 +100,34 @@ describe("details columns", () => {
       expect(option.props.onPress).toBeUndefined();
     }
   });
+  it.each([false, true])("answers a pending question from the details (multiSelect: %s)", async (multiSelect) => {
+    const base = props(false);
+    const card = { ...base.card, lane: "needs_input" as const, permission: {
+      requestId: "q", kind: "question" as const, title: "Question", summary: "Keep the timer?", actions: [], remaining: 0,
+      questions: [{ question: "Keep the timer?", multiSelect, options: [{ label: "Keep" }, { label: "Remove" }] }],
+    } };
+    const onAnswer = vi.fn(() => Promise.resolve());
+    await act(async () => { renderer = TestRenderer.create(<TaskDetailCards {...base} card={card} columns={false} tabs scrollHeader onAnswer={onAnswer} />); });
+    const submit = () => host(renderer!.root, "detail-pending-submit");
+    expect(submit().props.disabled).toBe(true);
+    const options = () => renderer!.root.findAll((node) => typeof node.type === "string" && node.props.testID === "detail-pending-option");
+    await act(async () => options()[0]!.props.onPress());
+    await act(async () => options()[1]!.props.onPress());
+    await act(async () => submit().props.onPress());
+    expect(onAnswer).toHaveBeenCalledWith({ "Keep the timer?": multiSelect ? "Keep, Remove" : "Remove" });
+  });
+  it("dismisses a pending question and types an Other answer", async () => {
+    const base = props(false);
+    const card = { ...base.card, lane: "needs_input" as const, permission: {
+      requestId: "q2", kind: "question" as const, title: "Question", summary: "Where?", actions: [], remaining: 0,
+      questions: [{ question: "Where?", multiSelect: false, options: [{ label: "Here" }] }],
+    } };
+    const onAnswer = vi.fn(() => Promise.resolve());
+    await act(async () => { renderer = TestRenderer.create(<TaskDetailCards {...base} card={card} columns={false} tabs scrollHeader onAnswer={onAnswer} />); });
+    await act(async () => host(renderer!.root, "detail-pending-other").props.onChangeText("Somewhere else"));
+    await act(async () => host(renderer!.root, "detail-pending-submit").props.onPress());
+    expect(onAnswer).toHaveBeenLastCalledWith({ "Where?": "Somewhere else" });
+  });
   it("uses larger detail tabs on desktop", async () => {
     await act(async () => {
       renderer = TestRenderer.create(<TaskDetailCards {...props(false)} touch={false} columns={false} tabs />);

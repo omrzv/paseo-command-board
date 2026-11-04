@@ -198,6 +198,8 @@ export interface TaskDetailCardsProps extends TimeSource {
   markRead?: DetailRead | null;
   /** Sends a message to the agent, as typing in its tab does; absent leaves the reply box out. */
   onReply?(text: string, images: ReplyImage[]): Promise<void>;
+  /** Answers the pending question (answers keyed by question text), or dismisses it (null); absent shows the questions read-only. */
+  onAnswer?(answers: Record<string, string> | null): Promise<void>;
   /** The sections scroll under the fixed header (the sidebar); else the card grows with them (the sheet). */
   scrollBody?: boolean;
   /**
@@ -382,7 +384,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
                 }}
               >
                 {(id === "info" ? info : messages).map((section, index) => sectionView(section, index > 0))}
-                {id === "messages" ? <PendingQuestions card={card} tokens={tokens} language={props.language} /> : null}
+                {id === "messages" ? <PendingQuestions card={card} tokens={tokens} language={props.language} onAnswer={props.onAnswer} /> : null}
               </View>
             ))}
           </SheetScrollView>
@@ -398,7 +400,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
             <View style={{ flex: 1, minHeight: 0, display: tab === "messages" ? "flex" : "none" }}>
               <ScrollView key={`${card.id}-messages`} style={{ flex: 1 }} {...detailScrollProps("inset")} scrollEventThrottle={16} onScroll={(event) => publishBody("messages", scrollEdgePatch(event.nativeEvent))} onLayout={(event) => publishBody("messages", { viewport: event.nativeEvent.layout.height })} onContentSizeChange={(_width, height) => publishBody("messages", { content: height })} testID="detail-tab-messages-scroll">
                 {messages.map((section, index) => sectionView(section, index > 0))}
-                <PendingQuestions card={card} tokens={tokens} language={props.language} />
+                <PendingQuestions card={card} tokens={tokens} language={props.language} onAnswer={props.onAnswer} />
               </ScrollView>
             </View>
           </>
@@ -422,7 +424,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
         <View style={{ flex: 1, minWidth: 0 }}>
           <ScrollView key={`${card.id}-sections`} style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 2, paddingBottom: 4 }} {...detailScrollProps("inset")} testID="detail-column-sections">
             {rightOrder.map((section, index) => sectionView(section, index > 0))}
-            <PendingQuestions card={card} tokens={tokens} language={props.language} />
+            <PendingQuestions card={card} tokens={tokens} language={props.language} onAnswer={props.onAnswer} />
           </ScrollView>
         </View>
       </View>
@@ -434,10 +436,10 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
       {props.scrollBody ? (
         <ScrollView key={card.id} style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 4 }} {...detailScrollProps("inset")} testID="detail-body-scroll">
           {sections}
-          <PendingQuestions card={card} tokens={tokens} language={props.language} />
+          <PendingQuestions card={card} tokens={tokens} language={props.language} onAnswer={props.onAnswer} />
         </ScrollView>
       ) : (
-        <View style={{ paddingBottom: 4 }}>{sections}<PendingQuestions card={card} tokens={tokens} language={props.language} /></View>
+        <View style={{ paddingBottom: 4 }}>{sections}<PendingQuestions card={card} tokens={tokens} language={props.language} onAnswer={props.onAnswer} /></View>
       )}
     </View>
   );
@@ -445,21 +447,89 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
 
 type ScrollEdge = { y: number; viewport: number; content: number };
 
-function PendingQuestions({ card, tokens, language }: { card: TaskCard; tokens: TaskTokens; language: TasksLanguage }) {
+/** The pending question's answers: one label, several (joined as Claude Code does), or the typed "Other". */
+export function questionAnswers(questions: { question: string; multiSelect: boolean }[], picked: Record<number, string[]>, other: Record<number, string>): Record<string, string> | null {
+  const answers: Record<string, string> = {};
+  for (const [index, question] of questions.entries()) {
+    const typed = other[index]?.trim();
+    const chosen = [...(picked[index] ?? []), ...(typed ? [typed] : [])];
+    if (chosen.length === 0) return null;
+    answers[question.question] = question.multiSelect ? chosen.join(", ") : chosen[chosen.length - 1]!;
+  }
+  return answers;
+}
+
+function PendingQuestions({ card, tokens, language, onAnswer }: { card: TaskCard; tokens: TaskTokens; language: TasksLanguage; onAnswer?(answers: Record<string, string> | null): Promise<void> }) {
   const questions = card.lane === "needs_input" ? card.permission?.questions : undefined;
+  const requestId = card.permission?.requestId;
+  const [picked, setPicked] = useState<Record<number, string[]>>({});
+  const [other, setOther] = useState<Record<number, string>>({});
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  // A new request starts blank.
+  useEffect(() => { setPicked({}); setOther({}); setBusy(false); }, [requestId]);
   if (!questions?.length) return null;
+  const zh = language === "zh";
+  const answers = questionAnswers(questions, picked, other);
+  const interactive = onAnswer !== undefined;
+  const submit = (value: Record<string, string> | null) => {
+    if (!onAnswer || busy) return;
+    setBusy(true);
+    onAnswer(value).catch((error: unknown) => {
+      setBusy(false);
+      toast.error(error instanceof Error ? error.message : String(error));
+    });
+  };
+  const toggle = (index: number, label: string, multi: boolean) => {
+    setPicked((current) => {
+      const now = current[index] ?? [];
+      const next = multi ? (now.includes(label) ? now.filter((entry) => entry !== label) : [...now, label]) : [label];
+      return { ...current, [index]: next };
+    });
+    if (!multi) setOther((current) => ({ ...current, [index]: "" }));
+  };
   return <View testID="detail-pending-questions" style={{ paddingHorizontal: 12, paddingVertical: 12, gap: 12 }}>
-    <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.foreground }}>{language === "zh" ? "待回答问题" : "Questions awaiting an answer"}</Text>
-    {questions.map((question, index) => <View key={index} testID="detail-pending-question" style={{ gap: 16, padding: 12, borderWidth: 1, borderColor: tokens.border, borderRadius: 8, backgroundColor: tokens.surface1 }}>
-      <Text style={{ fontSize: F.base, color: tokens.foreground }}>{question.question}</Text>
-      {question.options.map((option, optionIndex) => <View key={optionIndex} testID="detail-pending-option" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-        <View style={{ paddingTop: 2 }}><Icon name={question.multiSelect ? "Square" : "Circle"} size={16} color={tokens.foregroundMuted} /></View>
-        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <Text style={{ fontSize: F.sm, color: tokens.foreground }}>{option.label}</Text>
-          {option.description ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{option.description}</Text> : null}
-        </View>
-      </View>)}
+    <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.foreground }}>{zh ? "待回答问题" : "Questions awaiting an answer"}</Text>
+    {questions.map((question, index) => <View key={index} testID="detail-pending-question" style={{ gap: 10, padding: 12, borderWidth: 1, borderColor: tokens.border, borderRadius: 8, backgroundColor: tokens.surface1 }}>
+      <Text style={{ fontSize: F.base, fontWeight: "600", color: tokens.foreground }}>{question.question}</Text>
+      {question.options.map((option, optionIndex) => {
+        const on = (picked[index] ?? []).includes(option.label);
+        const icon = question.multiSelect ? (on ? "SquareCheck" : "Square") : (on ? "CircleDot" : "Circle");
+        return <Pressable key={optionIndex} testID="detail-pending-option" disabled={!interactive || busy} accessibilityRole={question.multiSelect ? "checkbox" : "radio"} accessibilityState={{ checked: on }}
+          onPress={interactive ? () => toggle(index, option.label, question.multiSelect) : undefined}
+          style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 6, borderRadius: 6, backgroundColor: on ? withAlpha(tokens.accent, tokens.isDark ? 0.16 : 0.08) : "transparent" }}>
+          <View style={{ paddingTop: 2 }}><Icon name={icon} size={16} color={on ? tokens.accentText : tokens.foregroundMuted} /></View>
+          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+            <Text style={{ fontSize: F.sm, fontWeight: on ? "600" : "400", color: tokens.foreground }}>{option.label}</Text>
+            {option.description ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{option.description}</Text> : null}
+          </View>
+        </Pressable>;
+      })}
+      {interactive ? <TextInput
+        testID="detail-pending-other"
+        value={other[index] ?? ""}
+        editable={!busy}
+        onChangeText={(value) => {
+          setOther((current) => ({ ...current, [index]: value }));
+          if (!question.multiSelect && value.trim()) setPicked((current) => ({ ...current, [index]: [] }));
+        }}
+        placeholder={zh ? "其他…" : "Other…"}
+        placeholderTextColor={tokens.foregroundMuted}
+        style={{ minHeight: 38, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: tokens.card.background, fontSize: F.sm, color: tokens.foreground, outlineStyle: "none" } as unknown as TextStyle}
+      /> : null}
     </View>)}
+    {interactive ? <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+      <Pressable accessibilityRole="button" testID="detail-pending-dismiss" disabled={busy} onPress={() => submit(null)}
+        style={{ height: 36, paddingHorizontal: 12, flexDirection: "row", gap: 5, borderRadius: 8, alignItems: "center", borderWidth: 1, borderColor: tokens.border }}>
+        <Icon name="X" size={14} color={tokens.foregroundMuted} />
+        <Text style={{ fontSize: F.sm, color: tokens.foreground }}>{zh ? "忽略" : "Dismiss"}</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" testID="detail-pending-submit" disabled={busy || answers === null} onPress={() => submit(answers)}
+        style={{ height: 36, paddingHorizontal: 14, flexDirection: "row", gap: 5, borderRadius: 8, alignItems: "center", backgroundColor: tokens.accent, opacity: busy || answers === null ? 0.45 : 1 }}>
+        <Icon name={busy ? "Loader" : "Check"} size={14} color="#ffffff" />
+        <Text style={{ fontSize: F.sm, fontWeight: "600", color: "#ffffff" }}>{zh ? "提交" : "Submit"}</Text>
+      </Pressable>
+    </View> : null}
   </View>;
 }
 

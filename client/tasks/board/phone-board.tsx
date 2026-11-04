@@ -1,4 +1,5 @@
 import type { ReplyImage } from "../cards/detail-cards";
+import { useAgentReply } from "../actions/agent-reply";
 import React, { memo, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Animated,
@@ -615,6 +616,7 @@ function DetailsSheetBody(props: { card: TaskCard; board: BoardController; theme
   const colors = theme.colors;
   useParentTitle(board, card);
   const { firstPrompt, humanMessage, lastMessage, sessionTokens } = useDetailReads(board, card);
+  const agentReply = useAgentReply(board.paseo);
   const list = board.lanes[card.lane]?.cards ?? [];
   const index = list.findIndex((item) => item.id === card.id);
   const step = (delta: number) => {
@@ -664,7 +666,8 @@ function DetailsSheetBody(props: { card: TaskCard; board: BoardController; theme
           unarchive={board.unarchive.available ? board.unarchive : null}
           archive={board.archive}
           markRead={board.read.available ? board.read : null}
-          onReply={(text: string, images: ReplyImage[]) => board.paseo.agents.ref(card.id).send(text, { ...(images.length ? { images } : {}), activeTurnBehavior: "steer" })}
+          onReply={(text: string, images: ReplyImage[]) => agentReply.reply(card, text, images)}
+          onAnswer={(answers: Record<string, string> | null) => agentReply.answer(card, answers)}
           onScrollEdge={setContentUnderBar}
         />
       </View>

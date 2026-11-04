@@ -1,4 +1,5 @@
 import type { ReplyImage } from "../cards/detail-cards";
+import { useAgentReply } from "../actions/agent-reply";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
@@ -81,6 +82,7 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
     props.onReveal(agentId);
   };
   const { firstPrompt, humanMessage, lastMessage, sessionTokens } = useDetailReads(board, card);
+  const agentReply = useAgentReply(board.paseo);
   const stopAvailable = !!board.callbacks.onStop && !!card && (card.stoppable || activeStopChildren(card).length > 0);
   const detailProps = card
     ? {
@@ -108,7 +110,8 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
         unarchive: board.unarchive.available ? board.unarchive : null,
         archive: board.archive,
         markRead: board.read.available ? board.read : null,
-        onReply: (text: string, images: ReplyImage[]) => board.paseo.agents.ref(card.id).send(text, { ...(images.length ? { images } : {}), activeTurnBehavior: "steer" }),
+        onReply: (text: string, images: ReplyImage[]) => agentReply.reply(card, text, images),
+        onAnswer: (answers: Record<string, string> | null) => agentReply.answer(card, answers),
       }
     : null;
 
