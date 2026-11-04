@@ -106,4 +106,14 @@ describe("slack inbox", () => {
     expect(posted[1]).toEqual({ channel: "C1", text: "looks good", thread_ts: channel.id.split(":")[1] });
     expect((await inbox.inbox()).every((item) => item.state === "done" && item.replied)).toBe(true);
   });
+
+  it("answers a task's message after the inbox let it go, in the thread the task kept", async () => {
+    const { inbox, posted } = await setup("[]");
+    await inbox.connect("xoxp-1");
+    expect(await inbox.reply("C9:1700000000.000200", "done, thanks", false, "1700000000.000100")).toEqual({ ok: true, error: null });
+    expect(posted.at(-1)).toEqual({ channel: "C9", text: "done, thanks", thread_ts: "1700000000.000100" });
+    expect(await inbox.reply("D9:1700000000.000300", "ok")).toEqual({ ok: true, error: null });
+    expect(posted.at(-1)).toEqual({ channel: "D9", text: "ok", thread_ts: "1700000000.000300" });
+    expect(await inbox.reply("nonsense", "x")).toMatchObject({ ok: false });
+  });
 });

@@ -90,6 +90,6 @@ export const slackScanRpc = defineRpc({
  */
 export const slackReplyRpc = defineRpc({
   name: "slack.reply",
-  input: z.object({ id: z.string().min(1), text: z.string().min(1).max(8000), broadcast: z.boolean().optional() }),
+  input: z.object({ id: z.string().min(1), text: z.string().min(1).max(8000), broadcast: z.boolean().optional(), /** The thread to answer in when the message is no longer in the inbox (a task made from it). */ threadTs: z.string().optional() }),
   output: z.object({ ok: z.boolean(), error: z.string().nullable() }),
 });

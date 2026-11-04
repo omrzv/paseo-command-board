@@ -450,14 +450,16 @@ export function createSlackInbox(options: {
   }
 
   /** Posts the person's reply as them, always in the item's thread; `broadcast` also shows it in the channel or DM. */
-  async function reply(id: string, text: string, broadcast = false): Promise<{ ok: boolean; error: string | null }> {
+  async function reply(id: string, text: string, broadcast = false, threadTs?: string): Promise<{ ok: boolean; error: string | null }> {
     const current = await load();
     const item = current.items.find((entry) => entry.id === id);
-    if (!current.token || !item) return { ok: false, error: "Slack is not connected, or the message is gone." };
-    const ts = item.id.split(":")[1]!;
-    const thread = item.threadTs ?? ts;
+    if (!current.token) return { ok: false, error: "Slack is not connected." };
+    // A task made from a message keeps its id ("channel:ts"): it can be answered after the inbox let it go.
+    const [channelId, ts] = id.split(":");
+    if (!item && (!channelId || !ts)) return { ok: false, error: "The Slack message is gone." };
+    const thread = item ? item.threadTs ?? ts! : threadTs ?? ts!;
     try {
-      await call("chat.postMessage", current.token, { channel: item.channelId, text, thread_ts: thread, ...(broadcast ? { reply_broadcast: true } : {}) });
+      await call("chat.postMessage", current.token, { channel: item?.channelId ?? channelId!, text, thread_ts: thread, ...(broadcast ? { reply_broadcast: true } : {}) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/missing_scope|not_allowed_token_type/.test(message)) {
@@ -465,9 +467,11 @@ export function createSlackInbox(options: {
       }
       return { ok: false, error: message };
     }
-    item.replied = true;
-    item.state = "done";
-    await persist();
+    if (item) {
+      item.replied = true;
+      item.state = "done";
+      await persist();
+    }
     return { ok: true, error: null };
   }
 
@@ -547,7 +551,7 @@ export function registerSlackServer(server: PluginServerContext, inbox = createS
   });
   server.handle(slackStatusRpc, async () => ({ status: await inbox.status() }));
   server.handle(slackInboxRpc, async () => ({ items: await inbox.inbox(), status: await inbox.status() }));
-  server.handle(slackReplyRpc, ({ id, text, broadcast }) => inbox.reply(id, text, broadcast === true));
+  server.handle(slackReplyRpc, ({ id, text, broadcast, threadTs }) => inbox.reply(id, text, broadcast === true, threadTs));
   server.handle(slackSetStateRpc, async ({ id, state }) => ({ ok: await inbox.setState(id, state) }));
   server.handle(slackScanRpc, async () => {
     void inbox.scan();

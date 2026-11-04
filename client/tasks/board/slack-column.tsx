@@ -99,7 +99,7 @@ export function SlackColumn(props: { theme: PluginTheme; width: number; visible:
       title: item.title,
       notes: `${item.from} in ${item.where}:\n${item.text}`,
       links: item.links,
-      source: { kind: "slack", from: item.from, where: item.where, permalink: item.permalink, slackId: item.id },
+      source: { kind: "slack", from: item.from, where: item.where, permalink: item.permalink, slackId: item.id, ...(item.threadTs ? { threadTs: item.threadTs } : {}), direct: item.direct === true },
     }).then(() => {
       todosChanged();
       change(item, "done");
@@ -215,7 +215,11 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
 }
 
 /** A reply posted as the person: in the message's thread, or in its DM. */
-function SlackReply(props: { item: SlackItem; tokens: TaskTokens; tint: string; onSent(): void }) {
+/** The message a reply answers: an inbox item, or the source a task kept. */
+export type SlackReplyTarget = { id: string; where: string; direct?: boolean; threadTs?: string };
+
+/** Always in the thread; the box also sends it to the channel or as a DM, as Slack's does. */
+export function SlackReply(props: { item: SlackReplyTarget; tokens: TaskTokens; tint: string; onSent(): void; /** Ask the server to use this thread when the message left the inbox. */ keepThread?: boolean }) {
   const { tokens } = props;
   const reply = useRpc(slackReplyRpc);
   const [text, setText] = useState("");
@@ -227,7 +231,7 @@ function SlackReply(props: { item: SlackItem; tokens: TaskTokens; tint: string; 
     if (!message || busy) return;
     setBusy(true);
     setError(null);
-    void reply({ id: props.item.id, text: message, broadcast }).then((result) => {
+    void reply({ id: props.item.id, text: message, broadcast, ...(props.keepThread && props.item.threadTs ? { threadTs: props.item.threadTs } : {}) }).then((result) => {
       if (result.ok) {
         setText("");
         props.onSent();

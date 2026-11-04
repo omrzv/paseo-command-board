@@ -10,6 +10,7 @@ import { LinkedText } from "../cards/linked-text";
 import { localDay, sortTodos } from "./todo-model";
 import { onTodosChanged } from "./todo-events";
 import { StartAgentDialog } from "./start-agent";
+import { SlackReply } from "./slack-column";
 import { openLink } from "../../components/open-link";
 import type { PaseoApi } from "@getpaseo/client";
 import { type Todo, todosAddRpc, todosDeleteRpc, todosListRpc, todosUpdateRpc } from "../../../shared/todos-rpc";
@@ -163,6 +164,9 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
   );
 }
 
+/** Slack's purple, as on the Slack column. */
+const SLACK_TINT = "#7c3085";
+
 function TodoRow(props: {
   todo: Todo;
   tokens: TaskTokens;
@@ -178,6 +182,8 @@ function TodoRow(props: {
   const { todo, tokens } = props;
   const [title, setTitle] = useState(todo.title);
   const [notes, setNotes] = useState(todo.notes);
+  const [replying, setReplying] = useState(false);
+  const [sent, setSent] = useState(false);
   useEffect(() => { setTitle(todo.title); setNotes(todo.notes); }, [todo.title, todo.notes]);
   const overdue = !todo.done && todo.due !== null && todo.due < props.today;
   const dueToday = !todo.done && todo.due === props.today;
@@ -243,7 +249,19 @@ function TodoRow(props: {
                 <Text style={{ fontSize: F.sm, fontWeight: "700", color: "#ffffff" }}>{todo.agentId ? "Start another agent" : "Start agent"}</Text>
               </Pressable>
             ) : null}
+            {todo.source ? (
+              <Pressable accessibilityRole="button" testID="todo-slack-reply" accessibilityState={{ expanded: replying }} onPress={() => { setReplying((was) => !was); setSent(false); }}
+                style={{ height: 28, paddingHorizontal: 10, borderRadius: 7, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: SLACK_TINT, backgroundColor: replying ? withAlpha(SLACK_TINT, 0.14) : "transparent" }}>
+                <Icon name="Slack" size={13} color={SLACK_TINT} />
+                <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.foreground }}>Reply in Slack</Text>
+              </Pressable>
+            ) : null}
           </View>
+          {todo.source && replying ? (
+            <SlackReply keepThread tokens={tokens} tint={SLACK_TINT} item={{ id: todo.source.slackId, where: todo.source.where, direct: todo.source.direct, threadTs: todo.source.threadTs }}
+              onSent={() => { setReplying(false); setSent(true); }} />
+          ) : null}
+          {sent ? <Text testID="todo-slack-sent" style={{ fontSize: F.sm, color: tokens.success }}>Sent to Slack.</Text> : null}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
             {days.map((day) => {
               const selected = todo.due === day.value;

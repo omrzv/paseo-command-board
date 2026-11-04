@@ -14,7 +14,7 @@ export const todoSchema = z.object({
   /** Links kept with the task (from the Slack message it came from, or added). */
   links: z.array(z.string()).default([]),
   /** Where it came from: a Slack message keeps who wrote it, where, and its permalink. */
-  source: z.object({ kind: z.literal("slack"), from: z.string(), where: z.string(), permalink: z.string(), slackId: z.string() }).nullable().default(null),
+  source: z.object({ kind: z.literal("slack"), from: z.string(), where: z.string(), permalink: z.string(), slackId: z.string(), threadTs: z.string().optional(), direct: z.boolean().optional() }).nullable().default(null),
   /** The agent started from this task, once there is one. */
   agentId: z.string().nullable().default(null),
 });
