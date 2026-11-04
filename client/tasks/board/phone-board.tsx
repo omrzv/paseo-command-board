@@ -36,6 +36,8 @@ import { activeFilterCount, rememberLane, rememberedLane, resolveBoardParams } f
 import { useDetailReads, useParentTitle } from "./details-sidebar";
 import { LANE_EMPTY_ICON, sortLabel } from "./strings";
 import { sortsLoadedOnly } from "./sort";
+import { SlackColumn } from "./slack-column";
+import { TodoColumn } from "./todo-column";
 import { findCard, type BoardController, type BoardLayoutHandlers } from "./use-board";
 
 const nativeDriver = Platform.OS !== "web";
@@ -59,6 +61,34 @@ const SHEET_FILTER_BODY = { ...SHEET_BODY, flex: 1, minHeight: 0 } as const;
 
 type Sheet = { kind: "filters"; focus?: "sort" } | { kind: "details"; id: string } | null;
 
+type PhoneView = "board" | "slack" | "todos";
+const VIEWS: { id: PhoneView; label: string; icon: string }[] = [
+  { id: "board", label: "Agents", icon: "SquareKanban" },
+  { id: "slack", label: "Slack", icon: "Slack" },
+  { id: "todos", label: "My tasks", icon: "ListChecks" },
+];
+
+/** The phone's top switch: the agents board, the Slack inbox or My tasks, one at a time. */
+function ViewSwitch(props: { view: PhoneView; onChange(view: PhoneView): void; theme: PluginTheme }) {
+  const colors = props.theme.colors;
+  const card = taskTokens(props.theme).card;
+  return (
+    <View accessibilityRole="tablist" style={{ flexDirection: "row", gap: 4, marginHorizontal: 8, marginTop: 6, padding: 3, borderRadius: 10, backgroundColor: boardPalette(props.theme).panel }}>
+      {VIEWS.map((item) => {
+        const on = item.id === props.view;
+        return (
+          <Pressable key={item.id} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={item.label} testID={`phone-view-${item.id}`}
+            onPress={() => props.onChange(item.id)}
+            style={{ flex: 1, minHeight: 34, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: HAIRLINE, borderColor: on ? card.border : "transparent", backgroundColor: on ? card.background : "transparent", boxShadow: on ? card.shadow : undefined } as object}>
+            <Icon name={item.icon} size={14} color={on ? colors.foreground : colors.foregroundMuted} />
+            <Text numberOfLines={1} style={{ fontSize: F.base, fontWeight: on ? "600" : "500", color: on ? colors.foreground : colors.foregroundMuted }}>{item.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 /** The phone board (prototype 04): one lane at a time behind a tab bar, swiped or tapped. */
 export function PhoneBoard(props: {
   screen: PluginScreenProps;
@@ -80,6 +110,7 @@ export function PhoneBoard(props: {
   const chosen = picked && laneOrder.includes(picked) ? picked : null;
   const lane = defaultLane(lanes.needs_input.cards.length, chosen);
   const laneIndex = laneOrder.indexOf(lane);
+  const [view, setView] = useState<PhoneView>("board");
   const [searchOpen, setSearchOpen] = useState(false);
   const [sheet, setSheet] = useState<Sheet>(null);
   // Counted only while the sheet shows them: a filter pressed on the board does not count every card again.
@@ -301,6 +332,10 @@ export function PhoneBoard(props: {
 
   return (
     <View ref={rootRef} collapsable={false} style={{ flex: 1, backgroundColor: colors.surface0 }}>
+      <ViewSwitch view={view} onChange={setView} theme={theme} />
+      {view === "slack" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><SlackColumn theme={theme} width={0} visible={board.visible} fill /></View> : null}
+      {view === "todos" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><TodoColumn theme={theme} width={0} visible={board.visible} fill paseo={board.paseo} onOpenAgent={board.callbacks.onOpen} /></View> : null}
+      {view !== "board" ? null : <>
       <View style={{ minHeight: 52, flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 6, paddingRight: 6 }}>
         <RoundButton
           icon="Search"
@@ -504,6 +539,7 @@ export function PhoneBoard(props: {
           <LaneMotionLayer store={motion} renderCard={renderCopy} />
         </LaneMotionProvider>
       </View>
+      </>}
       {board.notice ? (
         // The board's messages sit at its bottom: the host's toast, at the
         // top, covered the header's task count for seconds.

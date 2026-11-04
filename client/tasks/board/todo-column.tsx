@@ -31,7 +31,10 @@ function dueLabel(due: string, today: string, tomorrow: string): string {
  * an agent's or a Slack message. Kept on the daemon, so every client shares
  * them. Enter in the top box adds one; a press opens it for notes and a day.
  */
-export function TodoColumn(props: { theme: PluginTheme; width: number; visible: boolean; onShown?(shown: boolean): void; paseo?: PaseoApi; onOpenAgent?(agentId: string): void }) {
+/** The phone's full-screen column. */
+const FILL = { flex: 1, minHeight: 0, paddingLeft: 12, paddingRight: 4, paddingTop: 4 } as const;
+
+export function TodoColumn(props: { theme: PluginTheme; width: number; visible: boolean; /** The phone: the whole screen, never collapsed. */ fill?: boolean; onShown?(shown: boolean): void; paseo?: PaseoApi; onOpenAgent?(agentId: string): void }) {
   const tokens = taskTokens(props.theme);
   const listNow = useRpc(todosListRpc);
   const addNow = useRpc(todosAddRpc);
@@ -87,7 +90,7 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
   const doneTodos = todos.filter((todo) => todo.done).sort((left, right) => (right.doneAt ?? 0) - (left.doneAt ?? 0));
   const urgent = openTodos.filter((todo) => todo.due !== null && todo.due <= today).length;
 
-  if (collapsed) {
+  if (collapsed && !props.fill) {
     return (
       <Pressable accessibilityRole="button" accessibilityLabel="Show my tasks" onPress={() => setCollapsed(false)} testID="todo-column-collapsed"
         style={{ width: COLLAPSED_WIDTH, alignItems: "center", paddingTop: 12, gap: 8, borderRightWidth: 1, borderRightColor: tokens.card.border }}>
@@ -98,16 +101,18 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
   }
 
   return (
-    <View testID="todo-column" style={{ width: props.width, paddingLeft: 12, paddingTop: 4, borderRightWidth: 1, borderRightColor: tokens.card.border }}>
+    <View testID="todo-column" style={props.fill ? FILL : { width: props.width, paddingLeft: 12, paddingTop: 4, borderRightWidth: 1, borderRightColor: tokens.card.border }}>
       <View style={{ height: 36, flexDirection: "row", alignItems: "center", gap: 6, paddingRight: 8 }}>
         <Icon name="ListChecks" size={16} color={tokens.accentText} />
         <Text style={{ fontSize: F.base, fontWeight: "600", color: tokens.foreground }}>My tasks</Text>
         <Text style={{ fontSize: F.base, color: tokens.foregroundMuted }}>{openTodos.length}</Text>
         <View style={{ flex: 1 }} />
-        <Pressable accessibilityRole="button" accessibilityLabel="Collapse" onPress={() => setCollapsed(true)} hitSlop={4}
-          style={{ width: 28, height: 28, borderRadius: 6, alignItems: "center", justifyContent: "center" }}>
-          <Icon name="PanelLeftClose" size={14} color={tokens.foregroundMuted} />
-        </Pressable>
+        {props.fill ? null : (
+          <Pressable accessibilityRole="button" accessibilityLabel="Collapse" onPress={() => setCollapsed(true)} hitSlop={4}
+            style={{ width: 28, height: 28, borderRadius: 6, alignItems: "center", justifyContent: "center" }}>
+            <Icon name="PanelLeftClose" size={14} color={tokens.foregroundMuted} />
+          </Pressable>
+        )}
       </View>
       <View style={{ marginRight: 8, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, height: 38, borderRadius: 10, borderWidth: 1.5, borderColor: withAlpha(tokens.accent, 0.55), backgroundColor: withAlpha(tokens.accent, tokens.isDark ? 0.1 : 0.05) }}>
         <Icon name="Plus" size={15} color={tokens.accentText} />

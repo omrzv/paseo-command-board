@@ -4656,6 +4656,20 @@ describe("Tasks board, the 1 s clock", () => {
 });
 
 describe("Tasks board, phone", () => {
+  it("switches between the agents board, the Slack inbox and My tasks", async () => {
+    await act(async () => { renderer = TestRenderer.create(screen(true)); });
+    const columns = () => renderer!.root.findAll((node) => typeof node.type === "function" && ["SlackColumn", "TodoColumn"].includes((node.type as { name: string }).name)).map((node) => [(node.type as { name: string }).name, node.props.fill]);
+    expect(hostsById("phone-stat-running").length).toBeGreaterThan(0);
+    expect(columns()).toEqual([]);
+    await act(async () => hostsById("phone-view-slack")[0]!.props.onPress());
+    expect(hostsById("phone-stat-running")).toHaveLength(0);
+    expect(columns()).toEqual([["SlackColumn", true]]);
+    await act(async () => hostsById("phone-view-todos")[0]!.props.onPress());
+    expect(columns()).toEqual([["TodoColumn", true]]);
+    await act(async () => hostsById("phone-view-board")[0]!.props.onPress());
+    expect(columns()).toEqual([]);
+    expect(hostsById("phone-stat-running").length).toBeGreaterThan(0);
+  });
   it("puts settings to the right of reset and opens it", () => {
     const openSettings = vi.fn();
     setTasksSettingsOpener(openSettings);

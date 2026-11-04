@@ -43,7 +43,10 @@ function linkLabel(url: string): string {
  * newest first, with Open in Slack, Done and Dismiss. Without a connection it
  * offers the token form; collapsed, it is a strip with the open count.
  */
-export function SlackColumn(props: { theme: PluginTheme; width: number; visible: boolean }) {
+/** The phone's full-screen column. */
+const FILL = { flex: 1, minHeight: 0, paddingLeft: 12, paddingRight: 4, paddingTop: 4 } as const;
+
+export function SlackColumn(props: { theme: PluginTheme; width: number; visible: boolean; /** The phone: the whole screen, never collapsed or hidden. */ fill?: boolean }) {
   const tokens = taskTokens(props.theme);
   // The RPC functions may be new on each render; refs keep the effects below from rerunning.
   const inboxNow = useRpc(slackInboxRpc);
@@ -103,11 +106,11 @@ export function SlackColumn(props: { theme: PluginTheme; width: number; visible:
     }, () => refresh());
   }, [change, refresh]);
 
-  if (status === null || hidden) return null;
+  if (status === null || (hidden && !props.fill)) return null;
   const open = items.filter((item) => item.state === "open");
   const closed = items.filter((item) => item.state !== "open");
 
-  if (collapsed) {
+  if (collapsed && !props.fill) {
     return (
       <Pressable accessibilityRole="button" accessibilityLabel="Show Slack inbox" onPress={() => setCollapsed(false)} testID="slack-column-collapsed"
         style={{ width: COLLAPSED_WIDTH, alignItems: "center", paddingTop: 12, gap: 8, borderRightWidth: 1, borderRightColor: tokens.card.border }}>
@@ -118,7 +121,7 @@ export function SlackColumn(props: { theme: PluginTheme; width: number; visible:
   }
 
   return (
-    <View testID="slack-column" style={{ width: props.width, paddingLeft: 12, paddingTop: 4, borderRightWidth: 1, borderRightColor: tokens.card.border }}>
+    <View testID="slack-column" style={props.fill ? FILL : { width: props.width, paddingLeft: 12, paddingTop: 4, borderRightWidth: 1, borderRightColor: tokens.card.border }}>
       <View style={{ height: 36, flexDirection: "row", alignItems: "center", gap: 6, paddingRight: 8 }}>
         <Icon name="Slack" size={16} color={SLACK_COLOR} />
         <Text style={{ fontSize: F.base, fontWeight: "600", color: tokens.foreground }}>Slack</Text>
@@ -126,10 +129,10 @@ export function SlackColumn(props: { theme: PluginTheme; width: number; visible:
         <View style={{ flex: 1 }} />
         {status.connected ? (
           <HeaderButton icon={status.scanning ? "Loader" : "RefreshCw"} label={status.scanning ? "Scanning Slack…" : "Scan Slack now"} tokens={tokens} onPress={() => { void rpc.current.scan({}).then((result) => setStatus(result.status)); }} />
-        ) : (
+        ) : props.fill ? null : (
           <HeaderButton icon="X" label="Hide until the board reopens" tokens={tokens} onPress={() => setHidden(true)} />
         )}
-        <HeaderButton icon="PanelLeftClose" label="Collapse" tokens={tokens} onPress={() => setCollapsed(true)} />
+        {props.fill ? null : <HeaderButton icon="PanelLeftClose" label="Collapse" tokens={tokens} onPress={() => setCollapsed(true)} />}
       </View>
       {!status.connected ? (
         <ConnectForm tokens={tokens} onConnected={(next) => { setStatus(next); refresh(); }} />
