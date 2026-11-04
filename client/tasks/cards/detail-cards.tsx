@@ -30,6 +30,7 @@ import { cardStrings } from "./strings";
 import { taskTokens, type TaskTokens } from "./tokens";
 import { TagMark } from "./tag-mark";
 import { LinkedText } from "./linked-text";
+import { workspaceColor } from "./workspace-color";
 import { modeIcon, THINKING_ICON } from "./mode-icons";
 import { BrandMark } from "./brand-mark";
 import { SubtaskRow } from "./subtask-row";
@@ -504,11 +505,13 @@ function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics;
   const insight = props.card.insight;
   if (!insight?.summary) return null;
   const { tokens, m } = props;
+  // The summary wears the workspace's colour, as the card's stripe does.
+  const color = workspaceColor(props.card.location, tokens.isDark) ?? tokens.accent;
   return (
-    <View testID="detail-insight" style={{ marginHorizontal: m.padH, marginTop: 2, marginBottom: 8, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: withAlpha(tokens.accent, tokens.isDark ? 0.14 : 0.08), borderLeftWidth: 3, borderLeftColor: tokens.accent }}>
+    <View testID="detail-insight" style={{ marginHorizontal: m.padH, marginTop: 2, marginBottom: 8, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: withAlpha(color, tokens.isDark ? 0.16 : 0.09), borderLeftWidth: 3, borderLeftColor: color }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 3 }}>
-        <Icon name="Sparkles" size={12} color={tokens.accentText} />
-        <Text style={{ flex: 1, fontSize: F.sm, fontWeight: "600", color: tokens.accentText }}>{props.language === "zh" ? "摘要" : "Summary"}</Text>
+        <Icon name="Sparkles" size={12} color={color} />
+        <Text style={{ flex: 1, fontSize: F.sm, fontWeight: "600", color }}>{props.language === "zh" ? "摘要" : "Summary"}</Text>
 <InsightRefresh agentId={props.card.id} tokens={tokens} language={props.language} />
       </View>
       <LinkedText selectable text={insight.summary} linkColor={tokens.accentText} style={{ fontSize: F.base, lineHeight: Math.round(F.base * 1.45), color: tokens.foreground }} />
@@ -1145,7 +1148,8 @@ function Section(props: Inner & { section: DetailSection; closed: boolean; divid
       <View style={[{ paddingTop: 4, paddingBottom: bottom, paddingLeft: m.padH - 6, paddingRight: m.padH - 6 - gutter }, messageSection ? {
         // Each message reads on its own faint wash, so the reply, the last sent message and the first prompt tell apart at a glance.
         marginHorizontal: 6, marginVertical: 4, borderRadius: 10,
-        backgroundColor: section === "message" ? withAlpha(tokens.success, tokens.isDark ? 0.1 : 0.06) : section === "human" ? withAlpha(tokens.accent, tokens.isDark ? 0.1 : 0.06) : withAlpha(tokens.foreground, tokens.isDark ? 0.05 : 0.035),
+        // Three greys, darkest for the latest reply: no hue, so only the summary and the reply box carry colour.
+        backgroundColor: withAlpha(tokens.foreground, (section === "message" ? 0.075 : section === "human" ? 0.05 : 0.028) * (tokens.isDark ? 1.3 : 1)),
       } : null]}>
         {messageSection ? (
           <Pressable {...ROW_ROLE} accessibilityLabel={props.closed ? words.expand(title) : words.collapse(title)} {...tipProps(props.closed ? words.expand(title) : words.collapse(title))} accessibilityState={{ expanded: !props.closed }} onPress={() => props.onToggleSection(!props.closed)} testID={`${testID}-heading`} style={{ flexDirection: "row", alignItems: "center", paddingLeft: 6 }}>

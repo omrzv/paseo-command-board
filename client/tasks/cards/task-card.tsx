@@ -25,6 +25,7 @@ import { agentPillColors, BrandMark, branchPillColors, neutralPillColors, type A
 import { THINKING_ICON } from "./mode-icons";
 import { subagentFacts } from "../subagent-type";
 import { identityColor, ProjectIcon, projectViewKey } from "./project-icon";
+import { workspaceColor } from "./workspace-color";
 import { SpinnerRing, StatusIcon } from "./status-icon";
 import { TitleLoading } from "./title-loading";
 import { TitleUndo } from "./title-undo";
@@ -826,7 +827,8 @@ function TaskCardViewImpl(given: TaskCardViewProps) {
   // Meta row ---------------------------------------------------------------
   const avatar = layout.projectAvatar;
   // The project's colour leads the card: its stripe, and the location in bold.
-  const projectColor = location.projectIconColor || (location.projectId || location.projectName ? identityColor(projectViewKey(location, props.hostId)) : null);
+  // The workspace's colour leads the card (each workspace its own, not one per project).
+  const projectColor = workspaceColor(location, tokens.isDark);
   const metaStyle = text(m.metaSize, m.metaLine, muted);
   const locationStyle: TextStyle = projectColor ? { ...text(m.metaSize + 3, m.metaLine + 4, projectColor), fontWeight: "700" } : { ...text(m.metaSize + 3, m.metaLine + 4, tokens.foreground), fontWeight: "700" };
   const parentLabel = card.parent ? card.parent.title ?? strings.parentUnknown : null;

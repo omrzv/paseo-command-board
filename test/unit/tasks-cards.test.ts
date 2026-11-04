@@ -144,6 +144,7 @@ import { permissionButtons } from "../../client/tasks/actions";
 import { providerBrand } from "../../client/components/provider-logo";
 import { seedMarkBitmaps } from "../../client/components/marks";
 import { mix, withAlpha } from "../../client/components/theme-tokens";
+import { workspaceColor } from "../../client/tasks/cards/workspace-color";
 import { identityColor, projectIconRadius, projectInitial, projectViewKey } from "../../client/tasks/cards/project-icon";
 import { unavailableTask } from "../../shared/task-availability";
 import { LANE_ORDER } from "../../client/tasks/model";
@@ -4288,7 +4289,7 @@ describe("card tokens follow the host theme", () => {
       expect(flat(hostByTestId(tree.root, "task-card-title").props.style).color).toBe(colors.foreground);
       // The location reads in its project's colour, whatever the theme.
       const child = sample("sample-child-1");
-      expect(flat(hostByTestId(tree.root, "task-card-meta-location").props.style).color).toBe(child.location.projectIconColor || identityColor(projectViewKey(child.location)));
+      expect(flat(hostByTestId(tree.root, "task-card-meta-location").props.style).color).toBe(workspaceColor(child.location, tokens.isDark));
       const armed = byLabel(tree.root, "确认停止");
       expect(flat(armed.props.style)).toMatchObject({ backgroundColor: "transparent", borderColor: colors.statusDanger });
       expect(flat(armed.find((node) => (node.type as unknown) === "Text").props.style).color).toBe(colors.statusDanger);
@@ -4541,5 +4542,18 @@ describe("TaskCardView long-press menu", () => {
     const tree = await render(cardElement(sample("sample-running"), { onLongPress: () => false }));
     await act(async () => hostByTestId(tree.root, "task-card-sample-running").props.onLongPress({ nativeEvent: { pageX: 140, pageY: 280 } }));
     expect(rows(tree.root)).toHaveLength(0);
+  });
+});
+
+describe("workspace colours", () => {
+  it("gives each workspace of one project its own colour, steady across renders", () => {
+    const base = { projectKey: "p", projectId: "p", projectName: "omerziv", workspaceTitle: null };
+    const root = workspaceColor({ ...base, workspaceId: "wks_root" }, false);
+    const ai = workspaceColor({ ...base, workspaceId: "wks_ai" }, false);
+    const fam = workspaceColor({ ...base, workspaceId: "wks_fam" }, false);
+    expect(new Set([root, ai, fam]).size).toBe(3);
+    expect(workspaceColor({ ...base, workspaceId: "wks_ai" }, false)).toBe(ai);
+    expect(ai).toMatch(/^#[0-9a-f]{6}$/);
+    expect(workspaceColor({ ...base, workspaceId: "wks_ai" }, true)).not.toBe(ai);
   });
 });
