@@ -1142,7 +1142,11 @@ function Section(props: Inner & { section: DetailSection; closed: boolean; divid
   return (
     <View testID={testID} onLayout={onLayout}>
       {props.divider ? <View style={{ height: StyleSheet.hairlineWidth, marginLeft: m.padH, marginRight: m.padH - gutter, backgroundColor: tokens.card.border }} /> : null}
-      <View style={{ paddingTop: 4, paddingBottom: bottom, paddingLeft: m.padH - 6, paddingRight: m.padH - 6 - gutter }}>
+      <View style={[{ paddingTop: 4, paddingBottom: bottom, paddingLeft: m.padH - 6, paddingRight: m.padH - 6 - gutter }, messageSection ? {
+        // Each message reads on its own faint wash, so the reply, the last sent message and the first prompt tell apart at a glance.
+        marginHorizontal: 6, marginVertical: 4, borderRadius: 10,
+        backgroundColor: section === "message" ? withAlpha(tokens.success, tokens.isDark ? 0.1 : 0.06) : section === "human" ? withAlpha(tokens.accent, tokens.isDark ? 0.1 : 0.06) : withAlpha(tokens.foreground, tokens.isDark ? 0.05 : 0.035),
+      } : null]}>
         {messageSection ? (
           <Pressable {...ROW_ROLE} accessibilityLabel={props.closed ? words.expand(title) : words.collapse(title)} {...tipProps(props.closed ? words.expand(title) : words.collapse(title))} accessibilityState={{ expanded: !props.closed }} onPress={() => props.onToggleSection(!props.closed)} testID={`${testID}-heading`} style={{ flexDirection: "row", alignItems: "center", paddingLeft: 6 }}>
             <View style={{ width: 24, height: 24, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: detailColors(tokens).sunk }}>

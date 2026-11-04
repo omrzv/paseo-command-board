@@ -149,9 +149,11 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
   const [expanded, setExpanded] = useState(false);
   const tint = item.kind === "review" ? tokens.accent : item.kind === "question" ? tokens.status.warning : SLACK_COLOR;
   return (
-    <Pressable testID={`slack-card-${item.id}`} accessibilityLabel={expanded ? "Collapse message" : "Show the whole message"} onPress={() => setExpanded((was) => !was)}
+    // Only the message itself toggles the card: the links, buttons and reply box below take their own presses.
+    <View testID={`slack-card-${item.id}`}
       style={{ borderRadius: 10, borderWidth: 1, borderColor: expanded ? tint : tokens.card.border, backgroundColor: tokens.card.background, padding: 10, paddingLeft: 13, gap: 5, opacity: closed && !expanded ? 0.55 : 1, overflow: "hidden" }}>
       <View pointerEvents="none" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: tint }} />
+      <Pressable accessibilityRole="button" accessibilityLabel={expanded ? "Collapse message" : "Show the whole message"} onPress={() => setExpanded((was) => !was)} style={{ gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
         <Icon name={KIND_ICON[item.kind]} size={13} color={tint} />
         <Text style={{ fontSize: F.sm, fontWeight: "600", color: tint }}>{KIND_LABEL[item.kind]}</Text>
@@ -161,6 +163,7 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
       <Text numberOfLines={2} style={{ fontSize: F.base, fontWeight: "600", color: tokens.foreground, textDecorationLine: closed ? "line-through" : "none" }}>{item.title}</Text>
       <LinkedText text={item.text} linkColor={tokens.accentText} numberOfLines={expanded ? undefined : 3} selectable={expanded}
         style={{ fontSize: expanded ? F.base : F.sm, lineHeight: expanded ? Math.round(F.base * 1.45) : undefined, color: expanded ? tokens.foreground : tokens.foregroundMuted }} />
+      </Pressable>
       {item.links.length > 0 ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
           {item.links.map((url) => (
@@ -180,13 +183,14 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
           <CardButton icon="Undo2" label="Reopen" tokens={tokens} onPress={() => props.onState(item, "open")} />
         ) : (
           <>
+            <CardButton icon="Reply" label="Reply" tokens={tokens} onPress={() => setExpanded(true)} />
             <CardButton icon="X" label="Not a task" tokens={tokens} onPress={() => props.onState(item, "dismissed")} />
             <CardButton icon="Check" label="Done" tokens={tokens} strong onPress={() => props.onState(item, "done")} />
           </>
         )}
       </View>
       {expanded && item.state === "open" ? <SlackReply item={item} tokens={tokens} tint={tint} onSent={() => props.onState({ ...item, replied: true }, "done")} /> : null}
-    </Pressable>
+    </View>
   );
 }
 
@@ -211,13 +215,14 @@ function SlackReply(props: { item: SlackItem; tokens: TaskTokens; tint: string; 
   };
   const where = props.item.direct && !props.item.threadTs ? `Reply to ${props.item.where}` : "Reply in thread";
   return (
-    <View style={{ marginTop: 6, gap: 6 }} onStartShouldSetResponder={() => true}>
+    <View style={{ marginTop: 6, gap: 6 }}>
       <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, padding: 4, borderRadius: 8, borderWidth: 1.5, borderColor: props.tint }}>
         <TextInput
           testID="slack-reply-input"
           value={text}
           onChangeText={setText}
           multiline
+          autoFocus
           editable={!busy}
           placeholder={`${where}…`}
           placeholderTextColor={tokens.foregroundMuted}

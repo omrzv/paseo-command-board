@@ -214,7 +214,8 @@ export const StatusIcon = memo(function StatusIcon(props: StatusIconProps) {
         box={box}
         mark={mark}
         color={tokens.status.running}
-        animated={props.animated !== false}
+        // Still by default (the user's call): a running task's ring does not turn; pass animated to opt in.
+        animated={props.animated === true}
         accessibilityLabel={props.accessibilityLabel}
       />
     );

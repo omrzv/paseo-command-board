@@ -742,12 +742,17 @@ describe("StatusIcon", () => {
     expect(statusMarkSize(20)).toBe(14);
   });
 
+  it("keeps a running task's ring still unless asked to animate", async () => {
+    await render(React.createElement(StatusIcon, { kind: "running", theme: LIGHT }));
+    expect(statusRingHolders()).toBe(0);
+  });
+
   it("runs every ring from one shared native-driver loop, and stops it when the last ring leaves", async () => {
     const tree = await render(
       React.createElement(
         React.Fragment,
         null,
-        ...[16, 12, 20].map((size) => React.createElement(StatusIcon, { key: size, kind: "running", size, theme: LIGHT })),
+        ...[16, 12, 20].map((size) => React.createElement(StatusIcon, { key: size, kind: "running", size, theme: LIGHT, animated: true })),
       ),
     );
     expect(motion.loops).toHaveLength(1);
@@ -784,7 +789,7 @@ describe("StatusIcon", () => {
       React.createElement(
         React.Fragment,
         null,
-        React.createElement(StatusIcon, { key: "running", kind: "running", theme: LIGHT }),
+        React.createElement(StatusIcon, { key: "running", kind: "running", theme: LIGHT, animated: true }),
         React.createElement(SpinnerRing, { key: "spinner", size: 13, color: "#d93636", testID: "button-spinner" }),
       ),
     );
