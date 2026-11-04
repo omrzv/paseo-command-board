@@ -201,19 +201,22 @@ function SlackReply(props: { item: SlackItem; tokens: TaskTokens; tint: string; 
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [broadcast, setBroadcast] = useState(false);
   const send = () => {
     const message = text.trim();
     if (!message || busy) return;
     setBusy(true);
     setError(null);
-    void reply({ id: props.item.id, text: message }).then((result) => {
+    void reply({ id: props.item.id, text: message, broadcast }).then((result) => {
       if (result.ok) {
         setText("");
         props.onSent();
       } else setError(result.error);
     }, (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught))).finally(() => setBusy(false));
   };
-  const where = props.item.direct && !props.item.threadTs ? `Reply to ${props.item.where}` : "Reply in thread";
+  const where = "Reply in thread";
+  // Slack's own wording for the broadcast box.
+  const broadcastLabel = props.item.direct ? "Also send as direct message" : `Also send to ${props.item.where}`;
   return (
     <View style={{ marginTop: 6, gap: 6 }}>
       <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, padding: 4, borderRadius: 8, borderWidth: 1.5, borderColor: props.tint }}>
@@ -240,6 +243,13 @@ function SlackReply(props: { item: SlackItem; tokens: TaskTokens; tint: string; 
           <Text style={{ fontSize: F.sm, fontWeight: "600", color: "#ffffff" }}>{busy ? "Sending…" : "Send"}</Text>
         </Pressable>
       </View>
+      <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: broadcast }} accessibilityLabel={broadcastLabel} onPress={() => setBroadcast((was) => !was)} testID="slack-reply-broadcast"
+        style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
+        <View style={{ width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: broadcast ? props.tint : tokens.foregroundMuted, backgroundColor: broadcast ? props.tint : "transparent", alignItems: "center", justifyContent: "center" }}>
+          {broadcast ? <Icon name="Check" size={11} color="#ffffff" /> : null}
+        </View>
+        <Text style={{ fontSize: F.sm, color: tokens.foreground }}>{broadcastLabel}</Text>
+      </Pressable>
       {error ? <Text style={{ fontSize: F.sm, color: tokens.danger }}>{error}</Text> : null}
     </View>
   );

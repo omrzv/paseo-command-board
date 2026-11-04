@@ -90,7 +90,7 @@ describe("slack inbox", () => {
     expect(items.every((item) => item.replied && item.state === "done")).toBe(true);
   });
 
-  it("does not add the same message twice, and replies in the thread or the DM", async () => {
+  it("does not add the same message twice, and always replies in the thread", async () => {
     const { inbox, posted } = await setup('[{"i":0,"kind":"request","title":"Do it"},{"i":2,"kind":"question","title":"Rollout"}]');
     await inbox.connect("xoxp-1");
     await inbox.scan();
@@ -99,9 +99,10 @@ describe("slack inbox", () => {
     expect(items).toHaveLength(2);
     const dm = items.find((item) => item.direct)!;
     const channel = items.find((item) => !item.direct)!;
-    expect(await inbox.reply(dm.id, "on it")).toEqual({ ok: true, error: null });
+    expect(await inbox.reply(dm.id, "on it", true)).toEqual({ ok: true, error: null });
     expect(await inbox.reply(channel.id, "looks good")).toEqual({ ok: true, error: null });
-    expect(posted[0]).toEqual({ channel: "D1", text: "on it" });
+    // Always in the message's thread; broadcast also shows it in the DM or channel.
+    expect(posted[0]).toEqual({ channel: "D1", text: "on it", thread_ts: dm.id.split(":")[1], reply_broadcast: true });
     expect(posted[1]).toEqual({ channel: "C1", text: "looks good", thread_ts: channel.id.split(":")[1] });
     expect((await inbox.inbox()).every((item) => item.state === "done" && item.replied)).toBe(true);
   });

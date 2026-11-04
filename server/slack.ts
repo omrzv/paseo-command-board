@@ -449,15 +449,15 @@ export function createSlackInbox(options: {
     await persist();
   }
 
-  /** Posts the person's reply as them: in the item's thread, or in the DM when it was not threaded. */
-  async function reply(id: string, text: string): Promise<{ ok: boolean; error: string | null }> {
+  /** Posts the person's reply as them, always in the item's thread; `broadcast` also shows it in the channel or DM. */
+  async function reply(id: string, text: string, broadcast = false): Promise<{ ok: boolean; error: string | null }> {
     const current = await load();
     const item = current.items.find((entry) => entry.id === id);
     if (!current.token || !item) return { ok: false, error: "Slack is not connected, or the message is gone." };
     const ts = item.id.split(":")[1]!;
-    const thread = item.threadTs ?? (item.direct ? undefined : ts);
+    const thread = item.threadTs ?? ts;
     try {
-      await call("chat.postMessage", current.token, { channel: item.channelId, text, ...(thread ? { thread_ts: thread } : {}) });
+      await call("chat.postMessage", current.token, { channel: item.channelId, text, thread_ts: thread, ...(broadcast ? { reply_broadcast: true } : {}) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/missing_scope|not_allowed_token_type/.test(message)) {
@@ -547,7 +547,7 @@ export function registerSlackServer(server: PluginServerContext, inbox = createS
   });
   server.handle(slackStatusRpc, async () => ({ status: await inbox.status() }));
   server.handle(slackInboxRpc, async () => ({ items: await inbox.inbox(), status: await inbox.status() }));
-  server.handle(slackReplyRpc, ({ id, text }) => inbox.reply(id, text));
+  server.handle(slackReplyRpc, ({ id, text, broadcast }) => inbox.reply(id, text, broadcast === true));
   server.handle(slackSetStateRpc, async ({ id, state }) => ({ ok: await inbox.setState(id, state) }));
   server.handle(slackScanRpc, async () => {
     void inbox.scan();

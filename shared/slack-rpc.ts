@@ -83,9 +83,13 @@ export const slackScanRpc = defineRpc({
   output: z.object({ status: slackStatusSchema }),
 });
 
-/** Posts a reply as the person, in the message's thread (or its DM). Needs the chat:write user scope. */
+/**
+ * Posts a reply as the person, always in the message's thread. `broadcast`
+ * also shows it in the channel or DM, like Slack's "Also send to …" box.
+ * Needs the chat:write user scope.
+ */
 export const slackReplyRpc = defineRpc({
   name: "slack.reply",
-  input: z.object({ id: z.string().min(1), text: z.string().min(1).max(8000) }),
+  input: z.object({ id: z.string().min(1), text: z.string().min(1).max(8000), broadcast: z.boolean().optional() }),
   output: z.object({ ok: z.boolean(), error: z.string().nullable() }),
 });
