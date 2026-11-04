@@ -11,6 +11,12 @@ export const todoSchema = z.object({
   done: z.boolean(),
   createdAt: z.number(),
   doneAt: z.number().nullable(),
+  /** Links kept with the task (from the Slack message it came from, or added). */
+  links: z.array(z.string()).default([]),
+  /** Where it came from: a Slack message keeps who wrote it, where, and its permalink. */
+  source: z.object({ kind: z.literal("slack"), from: z.string(), where: z.string(), permalink: z.string(), slackId: z.string() }).nullable().default(null),
+  /** The agent started from this task, once there is one. */
+  agentId: z.string().nullable().default(null),
 });
 export type Todo = z.output<typeof todoSchema>;
 
@@ -23,7 +29,13 @@ export const todosListRpc = defineRpc({
 
 export const todosAddRpc = defineRpc({
   name: "todos.add",
-  input: z.object({ title: z.string().trim().min(1).max(500), notes: z.string().max(10_000).optional(), due: z.string().nullable().optional() }),
+  input: z.object({
+    title: z.string().trim().min(1).max(500),
+    notes: z.string().max(10_000).optional(),
+    due: z.string().nullable().optional(),
+    links: z.array(z.string().max(2000)).max(20).optional(),
+    source: todoSchema.shape.source.optional(),
+  }),
   output: z.object({ todo: todoSchema }),
 });
 
@@ -35,6 +47,7 @@ export const todosUpdateRpc = defineRpc({
     notes: z.string().max(10_000).optional(),
     due: z.string().nullable().optional(),
     done: z.boolean().optional(),
+    agentId: z.string().nullable().optional(),
   }),
   output: z.object({ todo: todoSchema.nullable() }),
 });

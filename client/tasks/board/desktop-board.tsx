@@ -724,7 +724,7 @@ export function DesktopBoard(props: {
       </Modal>
       <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
       {touch ? null : <SlackColumn theme={theme} width={Math.min(340, Math.max(260, layout.laneWidth))} visible={board.visible} />}
-      {touch ? null : <TodoColumn theme={theme} width={Math.min(320, Math.max(250, layout.laneWidth))} visible={board.visible} onShown={setTodosShown} />}
+      {touch ? null : <TodoColumn theme={theme} width={Math.min(320, Math.max(250, layout.laneWidth))} visible={board.visible} onShown={setTodosShown} paseo={board.paseo} onOpenAgent={callbacks.onOpen} />}
       <View
         testID="tasks-board-area"
         style={{ flex: 1, minHeight: 0, flexDirection: "row", overflow: "hidden" }}

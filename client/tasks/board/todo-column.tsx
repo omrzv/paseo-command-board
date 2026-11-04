@@ -8,6 +8,10 @@ import { TaskText as Text, HOST_FONT as F } from "../typography";
 import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { LinkedText } from "../cards/linked-text";
 import { localDay, sortTodos } from "./todo-model";
+import { onTodosChanged } from "./todo-events";
+import { StartAgentDialog } from "./start-agent";
+import { openLink } from "../../components/open-link";
+import type { PaseoApi } from "@getpaseo/client";
 import { type Todo, todosAddRpc, todosDeleteRpc, todosListRpc, todosUpdateRpc } from "../../../shared/todos-rpc";
 
 const POLL_MS = 30_000;
@@ -27,7 +31,7 @@ function dueLabel(due: string, today: string, tomorrow: string): string {
  * an agent's or a Slack message. Kept on the daemon, so every client shares
  * them. Enter in the top box adds one; a press opens it for notes and a day.
  */
-export function TodoColumn(props: { theme: PluginTheme; width: number; visible: boolean; onShown?(shown: boolean): void }) {
+export function TodoColumn(props: { theme: PluginTheme; width: number; visible: boolean; onShown?(shown: boolean): void; paseo?: PaseoApi; onOpenAgent?(agentId: string): void }) {
   const tokens = taskTokens(props.theme);
   const listNow = useRpc(todosListRpc);
   const addNow = useRpc(todosAddRpc);
@@ -41,6 +45,7 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
   const [showDone, setShowDone] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const alive = useRef(true);
+  const [starting, setStarting] = useState<Todo | null>(null);
 
   const refresh = useCallback(() => {
     void rpc.current.list({}).then((result) => {
@@ -55,7 +60,8 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
     if (!props.visible) return () => { alive.current = false; };
     refresh();
     const timer = setInterval(refresh, POLL_MS);
-    return () => { alive.current = false; clearInterval(timer); };
+    const stop = onTodosChanged(refresh);
+    return () => { alive.current = false; clearInterval(timer); stop(); };
   }, [refresh, props.visible]);
 
   const patch = useCallback((id: string, change: Partial<Pick<Todo, "title" | "notes" | "due" | "done">>) => {
@@ -122,7 +128,8 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
         {openTodos.map((todo) => (
           <TodoRow key={todo.id} todo={todo} tokens={tokens} open={open === todo.id} today={today} tomorrow={tomorrow}
             onToggleOpen={() => setOpen((current) => (current === todo.id ? null : todo.id))} onPatch={(change) => patch(todo.id, change)}
-            onRemove={() => { setTodos((current) => current?.filter((entry) => entry.id !== todo.id) ?? current); void rpc.current.remove({ id: todo.id }).catch(refresh); }} />
+            onRemove={() => { setTodos((current) => current?.filter((entry) => entry.id !== todo.id) ?? current); void rpc.current.remove({ id: todo.id }).catch(refresh); }}
+            onStartAgent={props.paseo ? () => setStarting(todo) : undefined} onOpenAgent={props.onOpenAgent} />
         ))}
         {doneTodos.length > 0 ? (
           <Pressable accessibilityRole="button" onPress={() => setShowDone((was) => !was)} style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 }}>
@@ -133,9 +140,20 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
         {showDone ? doneTodos.map((todo) => (
           <TodoRow key={todo.id} todo={todo} tokens={tokens} open={open === todo.id} today={today} tomorrow={tomorrow}
             onToggleOpen={() => setOpen((current) => (current === todo.id ? null : todo.id))} onPatch={(change) => patch(todo.id, change)}
-            onRemove={() => { setTodos((current) => current?.filter((entry) => entry.id !== todo.id) ?? current); void rpc.current.remove({ id: todo.id }).catch(refresh); }} />
+            onRemove={() => { setTodos((current) => current?.filter((entry) => entry.id !== todo.id) ?? current); void rpc.current.remove({ id: todo.id }).catch(refresh); }}
+            onStartAgent={props.paseo ? () => setStarting(todo) : undefined} onOpenAgent={props.onOpenAgent} />
         )) : null}
       </ScrollView>
+      {starting && props.paseo ? (
+        <StartAgentDialog todo={starting} paseo={props.paseo} theme={props.theme} onClose={() => setStarting(null)}
+          onStarted={(agentId) => {
+            const todo = starting;
+            setStarting(null);
+            setTodos((current) => current?.map((entry) => (entry.id === todo.id ? { ...entry, agentId, done: true, doneAt: Date.now() } : entry)) ?? current);
+            void rpc.current.update({ id: todo.id, agentId, done: true }).catch(refresh);
+            props.onOpenAgent?.(agentId);
+          }} />
+      ) : null}
     </View>
   );
 }
@@ -149,6 +167,8 @@ function TodoRow(props: {
   onToggleOpen(): void;
   onPatch(change: Partial<Pick<Todo, "title" | "notes" | "due" | "done">>): void;
   onRemove(): void;
+  onStartAgent?(): void;
+  onOpenAgent?(agentId: string): void;
 }) {
   const { todo, tokens } = props;
   const [title, setTitle] = useState(todo.title);
@@ -194,6 +214,31 @@ function TodoRow(props: {
             placeholder="Notes, links…" placeholderTextColor={tokens.foregroundMuted}
             style={[{ minHeight: 60, fontSize: F.sm, color: tokens.foreground, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, backgroundColor: withAlpha(tokens.foreground, 0.04), textAlignVertical: "top" }, INPUT]} />
           {todo.notes ? <LinkedText text={todo.notes} linkColor={tokens.accentText} numberOfLines={1} style={{ fontSize: F.sm, color: tokens.foregroundMuted }} /> : null}
+          {todo.links.length > 0 ? (
+            <View style={{ gap: 3 }}>
+              {todo.links.map((link) => <LinkedText key={link} text={link} linkColor={tokens.accentText} numberOfLines={1} style={{ fontSize: F.sm }} />)}
+            </View>
+          ) : null}
+          {todo.source ? (
+            <Pressable accessibilityRole="link" onPress={() => openLink(todo.source!.permalink)} style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+              <Icon name="Slack" size={12} color="#7c3085" />
+              <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted, textDecorationLine: "underline" }}>{`From ${todo.source.from} in ${todo.source.where}`}</Text>
+            </Pressable>
+          ) : null}
+          <View style={{ flexDirection: "row", gap: 6 }}>
+            {todo.agentId && props.onOpenAgent ? (
+              <Pressable accessibilityRole="button" onPress={() => props.onOpenAgent?.(todo.agentId!)} style={{ height: 28, paddingHorizontal: 10, borderRadius: 7, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: tokens.accent }}>
+                <Icon name="Bot" size={13} color={tokens.accentText} />
+                <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.accentText }}>Open agent</Text>
+              </Pressable>
+            ) : null}
+            {props.onStartAgent ? (
+              <Pressable accessibilityRole="button" testID="todo-start-agent" onPress={props.onStartAgent} style={{ height: 28, paddingHorizontal: 10, borderRadius: 7, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: tokens.accent }}>
+                <Icon name="Play" size={12} color="#ffffff" />
+                <Text style={{ fontSize: F.sm, fontWeight: "700", color: "#ffffff" }}>{todo.agentId ? "Start another agent" : "Start agent"}</Text>
+              </Pressable>
+            ) : null}
+          </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
             {days.map((day) => {
               const selected = todo.due === day.value;

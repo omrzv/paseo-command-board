@@ -18,6 +18,8 @@ import {
   slackSetStateRpc,
 } from "../../../shared/slack-rpc";
 import { LinkedText } from "../cards/linked-text";
+import { todosAddRpc } from "../../../shared/todos-rpc";
+import { todosChanged } from "./todo-events";
 
 const POLL_MS = 30_000;
 const COLLAPSED_WIDTH = 40;
@@ -47,8 +49,9 @@ export function SlackColumn(props: { theme: PluginTheme; width: number; visible:
   const inboxNow = useRpc(slackInboxRpc);
   const setStateNow = useRpc(slackSetStateRpc);
   const scanNow = useRpc(slackScanRpc);
-  const rpc = useRef({ inbox: inboxNow, setState: setStateNow, scan: scanNow });
-  rpc.current = { inbox: inboxNow, setState: setStateNow, scan: scanNow };
+  const addTodoNow = useRpc(todosAddRpc);
+  const rpc = useRef({ inbox: inboxNow, setState: setStateNow, scan: scanNow, addTodo: addTodoNow });
+  rpc.current = { inbox: inboxNow, setState: setStateNow, scan: scanNow, addTodo: addTodoNow };
   const [items, setItems] = useState<SlackItem[]>([]);
   const [status, setStatus] = useState<SlackStatus | null>(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -86,6 +89,19 @@ export function SlackColumn(props: { theme: PluginTheme; width: number; visible:
     setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, state } : entry)));
     void rpc.current.setState({ id: item.id, state }).catch(refresh);
   }, [refresh]);
+
+  /** The message becomes one of My tasks, keeping what it says, its links and where it came from; the Slack item closes. */
+  const makeTask = useCallback((item: SlackItem) => {
+    void rpc.current.addTodo({
+      title: item.title,
+      notes: `${item.from} in ${item.where}:\n${item.text}`,
+      links: item.links,
+      source: { kind: "slack", from: item.from, where: item.where, permalink: item.permalink, slackId: item.id },
+    }).then(() => {
+      todosChanged();
+      change(item, "done");
+    }, () => refresh());
+  }, [change, refresh]);
 
   if (status === null || hidden) return null;
   const open = items.filter((item) => item.state === "open");
@@ -125,7 +141,7 @@ export function SlackColumn(props: { theme: PluginTheme; width: number; visible:
               {status.lastScanAt ? `Nothing waiting on you. Scanned ${formatRelative(Date.now() - status.lastScanAt, "en")} ago.` : "Scanning your DMs and mentions…"}
             </Text>
           ) : null}
-          {open.map((item) => <SlackCard key={item.id} item={item} tokens={tokens} onState={change} />)}
+          {open.map((item) => <SlackCard key={item.id} item={item} tokens={tokens} onState={change} onMakeTask={makeTask} />)}
           {closed.length > 0 ? <Text style={{ marginTop: 8, fontSize: F.sm, color: tokens.foregroundMuted }}>Closed today</Text> : null}
           {closed.map((item) => <SlackCard key={item.id} item={item} tokens={tokens} onState={change} />)}
         </ScrollView>
@@ -143,7 +159,7 @@ function HeaderButton(props: { icon: string; label: string; tokens: TaskTokens; 
   );
 }
 
-function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: SlackItem, state: SlackItem["state"]): void }) {
+function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: SlackItem, state: SlackItem["state"]): void; onMakeTask?(item: SlackItem): void }) {
   const { item, tokens } = props;
   const closed = item.state !== "open";
   const [expanded, setExpanded] = useState(false);
@@ -183,7 +199,8 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
           <CardButton icon="Undo2" label="Reopen" tokens={tokens} onPress={() => props.onState(item, "open")} />
         ) : (
           <>
-            <CardButton icon="Reply" label="Reply" tokens={tokens} onPress={() => setExpanded(true)} />
+            <CardButton icon="Reply" label="Reply" tokens={tokens} labelled onPress={() => setExpanded(true)} />
+            {props.onMakeTask ? <CardButton icon="ListPlus" label="Task" tokens={tokens} labelled onPress={() => props.onMakeTask?.(item)} /> : null}
             <CardButton icon="X" label="Not a task" tokens={tokens} onPress={() => props.onState(item, "dismissed")} />
             <CardButton icon="Check" label="Done" tokens={tokens} strong onPress={() => props.onState(item, "done")} />
           </>
@@ -255,13 +272,13 @@ function SlackReply(props: { item: SlackItem; tokens: TaskTokens; tint: string; 
   );
 }
 
-function CardButton(props: { icon: string; label: string; tokens: TaskTokens; strong?: boolean; onPress(): void }) {
+function CardButton(props: { icon: string; label: string; tokens: TaskTokens; strong?: boolean; labelled?: boolean; onPress(): void }) {
   const { tokens } = props;
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={props.label} onPress={props.onPress}
       style={{ flexDirection: "row", alignItems: "center", gap: 4, height: 26, paddingHorizontal: props.strong ? 9 : 7, borderRadius: 6, borderWidth: 1, borderColor: props.strong ? tokens.success : tokens.card.border }}>
       <Icon name={props.icon} size={13} color={props.strong ? tokens.success : tokens.foregroundMuted} />
-      {props.strong ? <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.success }}>{props.label}</Text> : null}
+      {props.strong ? <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.success }}>{props.label}</Text> : props.labelled ? <Text style={{ fontSize: F.sm, color: tokens.foreground }}>{props.label}</Text> : null}
     </Pressable>
   );
 }

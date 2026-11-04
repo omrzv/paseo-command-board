@@ -15,3 +15,13 @@ export function sortTodos(todos: readonly Todo[]): Todo[] {
   });
 }
 
+
+/** The first message of an agent started from a task: the task, its notes, its links and where it came from, then the extra context. */
+export function agentPrompt(todo: Pick<Todo, "title" | "notes" | "links" | "source">, extra: string): string {
+  const parts = [todo.title.trim()];
+  if (todo.notes.trim()) parts.push(todo.notes.trim());
+  if (todo.links.length) parts.push(`Links:\n${todo.links.map((link) => `- ${link}`).join("\n")}`);
+  if (todo.source) parts.push(`From Slack: ${todo.source.from} in ${todo.source.where} (${todo.source.permalink})`);
+  if (extra.trim()) parts.push(`Additional context:\n${extra.trim()}`);
+  return parts.join("\n\n");
+}

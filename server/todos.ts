@@ -53,19 +53,23 @@ export function createTodoStore(path = todosPath(), now: () => number = Date.now
       const cutoff = now() - DONE_SHOWN_MS;
       return (await load()).filter((todo) => !todo.done || (todo.doneAt ?? 0) >= cutoff);
     },
-    async add(input: { title: string; notes?: string; due?: string | null }): Promise<Todo> {
+    async add(input: { title: string; notes?: string; due?: string | null; links?: string[]; source?: Todo["source"] }): Promise<Todo> {
       const list = await load();
-      const todo: Todo = { id: randomUUID(), title: input.title.trim(), notes: input.notes ?? "", due: due(input.due), done: false, createdAt: now(), doneAt: null };
+      const todo: Todo = {
+        id: randomUUID(), title: input.title.trim(), notes: input.notes ?? "", due: due(input.due), done: false, createdAt: now(), doneAt: null,
+        links: input.links ?? [], source: input.source ?? null, agentId: null,
+      };
       list.push(todo);
       await persist();
       return todo;
     },
-    async update(input: { id: string; title?: string; notes?: string; due?: string | null; done?: boolean }): Promise<Todo | null> {
+    async update(input: { id: string; title?: string; notes?: string; due?: string | null; done?: boolean; agentId?: string | null }): Promise<Todo | null> {
       const todo = (await load()).find((entry) => entry.id === input.id);
       if (!todo) return null;
       if (input.title !== undefined) todo.title = input.title.trim();
       if (input.notes !== undefined) todo.notes = input.notes;
       if (input.due !== undefined) todo.due = due(input.due);
+      if (input.agentId !== undefined) todo.agentId = input.agentId;
       if (input.done !== undefined && input.done !== todo.done) {
         todo.done = input.done;
         todo.doneAt = input.done ? now() : null;
