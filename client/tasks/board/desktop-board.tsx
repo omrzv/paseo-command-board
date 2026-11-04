@@ -6,6 +6,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { TaskText as Text, HOST_FONT as F, HOST_LINE, laneTitle, TasksTypography, TasksTypographyScale, useTasksFontScale, taskControlHeight } from "../typography";
 import { StatusIcon, taskTokens, type CardCallbacks } from "../cards";
 import { SlackColumn } from "./slack-column";
+import { TodoColumn } from "./todo-column";
 import { LANE_ORDER, LANE_STATUS, isHistoryLane, type LaneId, type LaneModel, type TaskCard } from "../model";
 import { useReducedMotion } from "../../ui/use-reduced-motion";
 import { holdHostGestures } from "../../ui/hold-host-gestures";
@@ -184,6 +185,20 @@ export function DesktopBoard(props: {
     () => ({ collapsed: emptyLanesCollapsed, disabled: emptyKey === "", onToggle: toggleEmptyLanes }),
     [emptyLanesCollapsed, emptyKey, toggleEmptyLanes],
   );
+  // Waiting fills only when an agent stops to ask (a permission, a plan, a question): folded while empty,
+  // so My tasks takes its place, and opened again the moment an agent waits.
+  const [todosShown, setTodosShown] = useState(false);
+  const waitingEmpty = todosShown && tasks.ready && !lanes.needs_input.loading && lanes.needs_input.cards.length === 0;
+  const autoFolded = useRef(false);
+  useEffect(() => {
+    if (waitingEmpty && !collapsedState.includes("needs_input")) {
+      autoFolded.current = true;
+      setCollapsedState((current) => (current.includes("needs_input") ? current : [...current, "needs_input"]));
+    } else if (!waitingEmpty && autoFolded.current && collapsedState.includes("needs_input")) {
+      autoFolded.current = false;
+      setCollapsedState((current) => current.filter((id) => id !== "needs_input"));
+    }
+  }, [waitingEmpty]);
   const focus = clampFocus(focusState, shapes);
   const [menu, setMenu] = useState<FilterMenu | null>(null);
 
@@ -709,6 +724,7 @@ export function DesktopBoard(props: {
       </Modal>
       <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
       {touch ? null : <SlackColumn theme={theme} width={Math.min(340, Math.max(260, layout.laneWidth))} visible={board.visible} />}
+      {touch ? null : <TodoColumn theme={theme} width={Math.min(320, Math.max(250, layout.laneWidth))} visible={board.visible} onShown={setTodosShown} />}
       <View
         testID="tasks-board-area"
         style={{ flex: 1, minHeight: 0, flexDirection: "row", overflow: "hidden" }}
