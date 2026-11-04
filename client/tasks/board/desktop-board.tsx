@@ -7,6 +7,7 @@ import { TaskText as Text, HOST_FONT as F, HOST_LINE, laneTitle, TasksTypography
 import { StatusIcon, taskTokens, type CardCallbacks } from "../cards";
 import { SlackColumn } from "./slack-column";
 import { TodoColumn } from "./todo-column";
+import { KeysColumn } from "./keys-column";
 import { LANE_ORDER, LANE_STATUS, isHistoryLane, type LaneId, type LaneModel, type TaskCard } from "../model";
 import { useReducedMotion } from "../../ui/use-reduced-motion";
 import { holdHostGestures } from "../../ui/hold-host-gestures";
@@ -725,6 +726,7 @@ export function DesktopBoard(props: {
       <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
       <SlackColumn theme={theme} width={Math.min(340, Math.max(260, layout.laneWidth))} visible={board.visible} />
       <TodoColumn theme={theme} width={Math.min(320, Math.max(250, layout.laneWidth))} visible={board.visible} onShown={setTodosShown} paseo={board.paseo} onOpenAgent={callbacks.onOpen} />
+      <KeysColumn theme={theme} width={Math.min(300, Math.max(240, layout.laneWidth))} visible={board.visible} />
       <View
         testID="tasks-board-area"
         style={{ flex: 1, minHeight: 0, flexDirection: "row", overflow: "hidden" }}

@@ -39,6 +39,7 @@ import { LANE_EMPTY_ICON, sortLabel } from "./strings";
 import { sortsLoadedOnly } from "./sort";
 import { SlackColumn } from "./slack-column";
 import { TodoColumn } from "./todo-column";
+import { KeysColumn } from "./keys-column";
 import { findCard, type BoardController, type BoardLayoutHandlers } from "./use-board";
 
 const nativeDriver = Platform.OS !== "web";
@@ -62,11 +63,12 @@ const SHEET_FILTER_BODY = { ...SHEET_BODY, flex: 1, minHeight: 0 } as const;
 
 type Sheet = { kind: "filters"; focus?: "sort" } | { kind: "details"; id: string } | null;
 
-type PhoneView = "board" | "slack" | "todos";
+type PhoneView = "board" | "slack" | "todos" | "keys";
 const VIEWS: { id: PhoneView; label: string; icon: string }[] = [
   { id: "board", label: "Agents", icon: "SquareKanban" },
   { id: "slack", label: "Slack", icon: "Slack" },
   { id: "todos", label: "My tasks", icon: "ListChecks" },
+  { id: "keys", label: "Keys", icon: "KeyRound" },
 ];
 
 /** The phone's top switch: the agents board, the Slack inbox or My tasks, one at a time. */
@@ -336,6 +338,7 @@ export function PhoneBoard(props: {
       <ViewSwitch view={view} onChange={setView} theme={theme} />
       {view === "slack" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><SlackColumn theme={theme} width={0} visible={board.visible} fill /></View> : null}
       {view === "todos" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><TodoColumn theme={theme} width={0} visible={board.visible} fill paseo={board.paseo} onOpenAgent={board.callbacks.onOpen} /></View> : null}
+      {view === "keys" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><KeysColumn theme={theme} width={0} visible={board.visible} fill /></View> : null}
       {view !== "board" ? null : <>
       <View style={{ minHeight: 52, flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 6, paddingRight: 6 }}>
         <RoundButton

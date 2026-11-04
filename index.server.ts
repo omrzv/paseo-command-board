@@ -23,6 +23,7 @@ import { registerInsightsServer } from "./server/insights";
 import { registerSlackServer } from "./server/slack";
 import { registerTodosServer } from "./server/todos";
 import { registerReplyImagesServer } from "./server/reply-images";
+import { registerKeysServer } from "./server/keys";
 import { shellOpenCommand, type PathEntry } from "./server/open-path";
 
 /**
@@ -481,6 +482,7 @@ export default function contribute(server: PluginServerContext) {
   registerSlackServer(server);
   registerTodosServer(server);
   registerReplyImagesServer(server);
+  registerKeysServer(server);
 
   server.handle(revealPathRpc, async (input) => {
     const requested = await resolveSelector(input.path, input.cwd);
