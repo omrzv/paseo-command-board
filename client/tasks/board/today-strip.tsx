@@ -9,6 +9,7 @@ import { TaskText as Text, HOST_FONT as F } from "../typography";
 import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { LinkedText } from "../cards/linked-text";
 import { hashColor } from "../cards/workspace-color";
+import { keysChanged } from "./keys-events";
 import { type CalendarStatus, type Meeting, calendarConnectRpc, calendarTodayRpc } from "../../../shared/calendar-rpc";
 import { type Member, type TeamTask, teamListRpc } from "../../../shared/team-rpc";
 
@@ -277,7 +278,7 @@ function ConnectStrip(props: { tokens: TaskTokens; onConnected(): void; onHide()
     setBusy(true);
     setError(null);
     void connectNow({ url: url.trim() }).then((result) => {
-      if (result.ok) { setUrl(""); props.onConnected(); } else setError(result.error);
+      if (result.ok) { setUrl(""); keysChanged(); props.onConnected(); } else setError(result.error);
     }, (caught: unknown) => setError(String(caught))).finally(() => setBusy(false));
   };
   return (

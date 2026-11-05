@@ -5,6 +5,7 @@ import { useRpc } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { withAlpha } from "../../components/theme-tokens";
 import { useCopy } from "../../ui/use-copy";
+import { onKeysChanged } from "./keys-events";
 import { TaskText as Text, HOST_FONT as F, TASK_MONO as MONO } from "../typography";
 import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { formatRelative } from "../cards/format";
@@ -54,7 +55,14 @@ export function KeysColumn(props: { theme: PluginTheme; width: number; visible: 
       setAvailable(result.available !== false);
     }, () => undefined);
   }, []);
-  useEffect(() => { if (props.visible) refresh(); }, [refresh, props.visible]);
+  // Read again when shown, when opened, every 30 s while open, and when another part of the board changed a key.
+  useEffect(() => { if (props.visible) refresh(); }, [refresh, props.visible, collapsed]);
+  useEffect(() => {
+    if (!props.visible || (collapsed && !props.fill)) return;
+    const timer = setInterval(refresh, 30_000);
+    return () => clearInterval(timer);
+  }, [refresh, props.visible, collapsed, props.fill]);
+  useEffect(() => onKeysChanged(refresh), [refresh]);
 
   const fail = (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught));
   const upsert = (key: KeyEntry) => setKeys((current) => {
