@@ -66,3 +66,10 @@ export const todosDeleteRpc = defineRpc({
   input: z.object({ id: z.string().min(1) }),
   output: z.object({ ok: z.boolean() }),
 });
+
+/** By day: overdue and today first, then by day, then undated; oldest first within each. */
+export function byDue(left: Pick<Todo, "due" | "createdAt">, right: Pick<Todo, "due" | "createdAt">): number {
+  const a = left.due ?? "9999-99-99";
+  const b = right.due ?? "9999-99-99";
+  return a === b ? left.createdAt - right.createdAt : a < b ? -1 : 1;
+}

@@ -3,8 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { z } from "zod";
-import { type Todo, todoSchema, todosAddRpc, todosDeleteRpc, todosListRpc, todosReorderRpc, todosUpdateRpc } from "../shared/todos-rpc";
-import { byDue } from "../client/tasks/board/todo-model";
+import { byDue, type Todo, todoSchema, todosAddRpc, todosDeleteRpc, todosListRpc, todosReorderRpc, todosUpdateRpc } from "../shared/todos-rpc";
 import { pluginDataDir } from "./plugin-data";
 
 /** Done to-dos stay listed this long, so a mistaken tick can be undone. */
