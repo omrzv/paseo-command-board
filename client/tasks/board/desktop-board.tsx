@@ -9,6 +9,7 @@ import { SlackColumn } from "./slack-column";
 import { TodoColumn } from "./todo-column";
 import { KeysColumn } from "./keys-column";
 import { TeamColumn } from "./team-column";
+import { TodayStrip } from "./today-strip";
 import { LANE_ORDER, LANE_STATUS, isHistoryLane, type LaneId, type LaneModel, type TaskCard } from "../model";
 import { useReducedMotion } from "../../ui/use-reduced-motion";
 import { holdHostGestures } from "../../ui/hold-host-gestures";
@@ -727,6 +728,7 @@ export function DesktopBoard(props: {
           </TasksTypography>
         </Modal.Content>
       </Modal>
+      <TodayStrip theme={theme} visible={board.visible} />
       <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
       {/* You on top (Slack, My tasks), your team below; the team folds to a bar. */}
       <View testID="board-people-block" style={{ minHeight: 0, flexDirection: "column", width: teamFolded ? undefined : slackWidth + todoWidth, borderRightWidth: teamFolded ? 0 : 1, borderRightColor: taskTokens(theme).card.border }}>

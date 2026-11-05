@@ -46,6 +46,12 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
   const [todos, setTodos] = useState<Todo[] | null>(null);
   const [draft, setDraft] = useState("");
   const [collapsed, setCollapsed] = useState(false);
+  const [startedNote, setStartedNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!startedNote) return;
+    const timer = setTimeout(() => setStartedNote(null), 5_000);
+    return () => clearTimeout(timer);
+  }, [startedNote]);
   const [showDone, setShowDone] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const alive = useRef(true);
@@ -129,6 +135,7 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
           style={[{ flex: 1, height: 36, fontSize: F.base, color: tokens.foreground }, INPUT]}
         />
       </View>
+      {startedNote ? <Text testID="todo-started-note" numberOfLines={2} style={{ marginRight: 8, marginBottom: 6, fontSize: F.sm, color: tokens.success }}>{startedNote}</Text> : null}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 6, paddingRight: 8, paddingBottom: 16 }}>
         {openTodos.length === 0 ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted, paddingVertical: 8 }}>Nothing to remember. Add anything above.</Text> : null}
         {openTodos.map((todo) => (
@@ -157,7 +164,8 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
             setStarting(null);
             setTodos((current) => current?.map((entry) => (entry.id === todo.id ? { ...entry, agentId, done: true, doneAt: Date.now() } : entry)) ?? current);
             void rpc.current.update({ id: todo.id, agentId, done: true }).catch(refresh);
-            props.onOpenAgent?.(agentId);
+            // Stay on the board: the new agent shows up in its lanes; "Open agent" on the task jumps to it.
+            setStartedNote(`Agent started: ${todo.title}`);
           }} />
       ) : null}
     </View>

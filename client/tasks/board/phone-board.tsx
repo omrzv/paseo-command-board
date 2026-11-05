@@ -41,6 +41,7 @@ import { SlackColumn } from "./slack-column";
 import { TodoColumn } from "./todo-column";
 import { KeysColumn } from "./keys-column";
 import { TeamColumn } from "./team-column";
+import { PhoneToday } from "./today-strip";
 import { findCard, type BoardController, type BoardLayoutHandlers } from "./use-board";
 
 const nativeDriver = Platform.OS !== "web";
@@ -338,6 +339,7 @@ export function PhoneBoard(props: {
   return (
     <View ref={rootRef} collapsable={false} style={{ flex: 1, backgroundColor: colors.surface0 }}>
       <ViewSwitch view={view} onChange={setView} theme={theme} />
+      <PhoneToday theme={theme} visible={board.visible} />
       {view === "slack" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><SlackColumn theme={theme} width={0} visible={board.visible} fill /></View> : null}
       {view === "todos" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><TodoColumn theme={theme} width={0} visible={board.visible} fill paseo={board.paseo} onOpenAgent={board.callbacks.onOpen} /></View> : null}
       {view === "team" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><TeamColumn theme={theme} visible={board.visible} fill /></View> : null}

@@ -23,7 +23,8 @@ import { registerInsightsServer } from "./server/insights";
 import { registerSlackServer } from "./server/slack";
 import { registerTodosServer } from "./server/todos";
 import { registerReplyImagesServer } from "./server/reply-images";
-import { registerKeysServer } from "./server/keys";
+import { createKeyStore, registerKeysServer } from "./server/keys";
+import { createCalendar, registerCalendarServer } from "./server/calendar";
 import { registerTeamServer } from "./server/team";
 import { shellOpenCommand, type PathEntry } from "./server/open-path";
 
@@ -483,7 +484,9 @@ export default function contribute(server: PluginServerContext) {
   registerSlackServer(server);
   registerTodosServer(server);
   registerReplyImagesServer(server);
-  registerKeysServer(server);
+  const keyStore = createKeyStore();
+  registerKeysServer(server, keyStore);
+  registerCalendarServer(server, createCalendar({ keys: keyStore }));
   registerTeamServer(server);
 
   server.handle(revealPathRpc, async (input) => {
