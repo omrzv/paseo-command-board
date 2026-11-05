@@ -5,12 +5,14 @@ import { describe, expect, it } from "vitest";
 import { createKeyStore, guessService, parseEnv, parseKeychainPassword, testKey, valueHint, type SecretStore } from "../../server/keys";
 import { envVarFor } from "../../shared/keys-rpc";
 
-function memorySecrets(): SecretStore & { map: Map<string, string> } {
+function memorySecrets(): SecretStore & { map: Map<string, string>; labels: Map<string, string> } {
   const map = new Map<string, string>();
+  const labels = new Map<string, string>();
   return {
     map,
+    labels,
     available: true,
-    set: async (id, value) => { map.set(id, value); },
+    set: async (id, value, meta) => { map.set(id, value); if (meta) labels.set(id, meta.label); },
     get: async (id) => { if (!map.has(id)) throw new Error("missing"); return map.get(id)!; },
     remove: async (id) => { map.delete(id); },
   };
@@ -47,6 +49,20 @@ describe("keys", () => {
     expect(await store.remove(key.id)).toBe(true);
     expect(secrets.map.size).toBe(0);
     expect(await store.list()).toEqual([]);
+  });
+
+  it("labels each Keychain item with its env var so agents can find it by name", async () => {
+    const { store, secrets } = await setup();
+    const key = await store.save({ name: "newsapi", envVar: "newsapi", value: "4b6802aaaaaaaab92e" });
+    expect(secrets.labels.get(key.id)).toBe("NEWSAPI");
+    // Renaming the env var relabels without a new value.
+    await store.save({ id: key.id, name: "News API", envVar: "NEWS_API_KEY" });
+    expect(secrets.labels.get(key.id)).toBe("NEWS_API_KEY");
+    expect(secrets.map.get(key.id)).toBe("4b6802aaaaaaaab92e");
+    // Older items get their labels on start.
+    secrets.labels.clear();
+    expect(await store.relabel()).toBe(1);
+    expect(secrets.labels.get(key.id)).toBe("NEWS_API_KEY");
   });
 
   it("tests a key against its service and records the result", async () => {

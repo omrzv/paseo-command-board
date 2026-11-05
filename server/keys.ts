@@ -14,7 +14,8 @@ export const KEYCHAIN_SERVICE = "paseo-keys";
 /** Where values live. The real one is the macOS Keychain; tests use a map. */
 export interface SecretStore {
   available: boolean;
-  set(id: string, value: string): Promise<void>;
+  /** `label` is what the Keychain shows and searches (the env var name); `comment` its description. */
+  set(id: string, value: string, meta?: { label: string; comment?: string }): Promise<void>;
   get(id: string): Promise<string>;
   remove(id: string): Promise<void>;
 }
@@ -29,14 +30,17 @@ export function keychainStore(): SecretStore {
   });
   return {
     available: process.platform === "darwin",
-    set: (id, value) => new Promise<void>((resolve, reject) => {
+    set: (id, value, meta) => new Promise<void>((resolve, reject) => {
       const child = spawn("/usr/bin/security", ["-i"], { stdio: ["pipe", "ignore", "pipe"] });
       let stderr = "";
       child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
       child.on("error", reject);
       child.on("close", (code) => (code === 0 && !/error/i.test(stderr) ? resolve() : reject(new Error(stderr.trim() || `security exited ${code}`))));
       const hex = Buffer.from(value, "utf8").toString("hex");
-      child.stdin.end(`add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${id} -l "Paseo key" -X ${hex}\n`);
+      const quoted = (text: string) => `"${text.replace(/["\\\n\r]/g, " ").trim()}"`;
+      const label = quoted(meta?.label || "Paseo key");
+      const comment = meta?.comment ? ` -j ${quoted(meta.comment)}` : "";
+      child.stdin.end(`add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${id} -l ${label}${comment} -X ${hex}\n`);
     }),
     // `-w` prints a non-ASCII value as bare hex, which cannot be told from a hex key; `-g` marks it.
     get: (id) => new Promise<string>((resolve, reject) => {
@@ -168,15 +172,20 @@ export function createKeyStore(options: { path?: string; secrets?: SecretStore; 
     return key;
   };
 
+  // Agents look keys up by env var name: `security find-generic-password -s paseo-keys -l NEWSAPI -w`.
+  const meta = (envVar: string, name: string) => ({ label: envVar, comment: `${name.trim()} (Paseo key)` });
+
   const save = async (input: { id?: string; name: string; envVar: string; service?: string; note?: string; value?: string }): Promise<KeyEntry> => {
     const all = await load();
     const envVar = envVarFor(input.envVar || input.name);
     if (input.id) {
       const key = await find(input.id);
       if (input.value) {
-        await secrets.set(key.id, input.value);
+        await secrets.set(key.id, input.value, meta(envVar, input.name));
         key.hint = valueHint(input.value);
         key.test = null;
+      } else if (envVar !== key.envVar || input.name.trim() !== key.name) {
+        await secrets.set(key.id, await secrets.get(key.id), meta(envVar, input.name));
       }
       Object.assign(key, { name: input.name.trim(), envVar, service: input.service || key.service, note: input.note ?? key.note, updatedAt: now() });
       await persist();
@@ -184,7 +193,7 @@ export function createKeyStore(options: { path?: string; secrets?: SecretStore; 
     }
     if (!input.value) throw new Error("A new key needs its value");
     const id = randomUUID();
-    await secrets.set(id, input.value);
+    await secrets.set(id, input.value, meta(envVar, input.name));
     const key: KeyEntry = { id, name: input.name.trim(), envVar, service: input.service || guessService(input.value), note: input.note ?? "", hint: valueHint(input.value), createdAt: now(), updatedAt: now(), test: null };
     all.push(key);
     await persist();
@@ -196,6 +205,15 @@ export function createKeyStore(options: { path?: string; secrets?: SecretStore; 
     list: async () => [...(await load())].sort((left, right) => left.name.localeCompare(right.name)),
     save,
     reveal: async (id: string) => secrets.get((await find(id)).id),
+    /** Keys saved before labels were their env var names: give each its name. */
+    async relabel() {
+      if (!secrets.available) return 0;
+      let done = 0;
+      for (const key of await load()) {
+        try { await secrets.set(key.id, await secrets.get(key.id), meta(key.envVar, key.name)); done++; } catch { /* missing from the Keychain */ }
+      }
+      return done;
+    },
     async remove(id: string) {
       const all = await load();
       const index = all.findIndex((entry) => entry.id === id);

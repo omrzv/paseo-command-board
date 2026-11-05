@@ -486,6 +486,7 @@ export default function contribute(server: PluginServerContext) {
   registerReplyImagesServer(server);
   const keyStore = createKeyStore();
   registerKeysServer(server, keyStore);
+  void keyStore.relabel().catch(() => undefined);
   registerCalendarServer(server, createCalendar({ keys: keyStore }));
   registerTeamServer(server);
 
