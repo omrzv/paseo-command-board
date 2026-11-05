@@ -149,7 +149,6 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
       {header}
       {error ? <Text style={{ fontSize: F.sm, color: tokens.danger, paddingRight: 8, paddingBottom: 4 }}>{error}</Text> : null}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 8, paddingRight: 8, paddingBottom: 16 }}>
-        <ManagerCard manager={manager} agenda={agenda} tokens={tokens} visible={props.visible} onChanged={refresh} />
         {managing ? (
           <MembersEditor members={members} tokens={tokens}
             search={(query) => rpc.current.people({ query })}
@@ -205,6 +204,10 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
           </Pressable>
         ) : null}
       </ScrollView>
+      {/* Your manager: a quiet line pinned under the team, opened when needed. */}
+      <View style={{ paddingRight: 8, paddingBottom: 6 }}>
+        <ManagerCard manager={manager} agenda={agenda} tokens={tokens} visible={props.visible} onChanged={refresh} />
+      </View>
     </View>
   );
 }

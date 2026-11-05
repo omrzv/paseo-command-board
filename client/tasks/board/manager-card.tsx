@@ -38,7 +38,7 @@ export function ManagerCard(props: { manager: Manager | null; agenda: AgendaItem
   const [asks, setAsks] = useState<SlackItem[]>([]);
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [draft, setDraft] = useState("");
-  const [folded, setFolded] = useState(false);
+  const [folded, setFolded] = useState(true);
   const [choosing, setChoosing] = useState(false);
   useEffect(() => { setAgenda(props.agenda); }, [props.agenda]);
 
@@ -67,14 +67,14 @@ export function ManagerCard(props: { manager: Manager | null; agenda: AgendaItem
   const add = () => { if (draft.trim()) { change({ op: "add", text: draft.trim() }); setDraft(""); } };
 
   return (
-    <View testID="manager-card" style={{ borderRadius: 9, borderWidth: 1, borderColor: withAlpha(MANAGER_COLOR, 0.55), backgroundColor: withAlpha(MANAGER_COLOR, tokens.isDark ? 0.07 : 0.05), paddingHorizontal: 8, paddingVertical: 6, gap: 5 }}>
+    <View testID="manager-card" style={{ borderTopWidth: 1, borderTopColor: tokens.card.border, paddingHorizontal: 2, paddingTop: 6, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: MANAGER_COLOR }} />
+        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: withAlpha(MANAGER_COLOR, 0.8) }} />
         <Pressable accessibilityRole="button" onPress={() => setFolded((was) => !was)} style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
-          <Text style={{ fontSize: F.base, fontWeight: "700", color: MANAGER_COLOR }}>{manager.name}</Text>
+          <Text style={{ fontSize: F.sm, fontWeight: "500", color: tokens.foregroundMuted }}>{manager.name}</Text>
           <Text style={{ fontSize: F.sm - 1, color: tokens.foregroundMuted }}>manager</Text>
         </Pressable>
-        {asks.length ? <Text style={{ fontSize: F.sm - 1, fontWeight: "700", color: tokens.status.warning }}>{`${asks.length} asked you`}</Text> : null}
+        {asks.length ? <Text style={{ fontSize: F.sm - 1, fontWeight: "600", color: tokens.status.warning }}>{`${asks.length} asked you`}</Text> : null}
         {open.length ? <Text style={{ fontSize: F.sm - 1, color: tokens.foregroundMuted }}>{`${open.length} to raise`}</Text> : null}
         <View style={{ flex: 1 }} />
         {meeting ? (
@@ -123,21 +123,25 @@ function ChooseManager(props: { tokens: TaskTokens; current: Manager | null; onP
   search.current = peopleNow;
   const [query, setQuery] = useState(props.current?.name ?? "Uri");
   const [people, setPeople] = useState<Array<{ id: string; name: string; title: string }>>([]);
+  // Unset, it is one quiet line until opened.
+  const [open, setOpen] = useState(props.current !== null);
   useEffect(() => {
-    if (query.trim().length < 2) { setPeople([]); return; }
+    if (!open || query.trim().length < 2) { setPeople([]); return; }
     const timer = setTimeout(() => { void search.current({ query: query.trim() }).then((result) => setPeople(result.people ?? []), () => setPeople([])); }, 250);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, open]);
   return (
-    <View testID="manager-choose" style={{ borderRadius: 9, borderWidth: 1, borderStyle: "dashed", borderColor: withAlpha(MANAGER_COLOR, 0.6), padding: 8, gap: 5 }}>
+    <View testID="manager-choose" style={{ borderTopWidth: 1, borderTopColor: tokens.card.border, paddingHorizontal: 2, paddingTop: 6, gap: 5 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: MANAGER_COLOR }} />
-        <Text style={{ flex: 1, fontSize: F.sm, fontWeight: "600", color: tokens.foreground }}>Your manager</Text>
+        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: withAlpha(MANAGER_COLOR, 0.8) }} />
+        <Pressable accessibilityRole="button" testID="manager-add" onPress={() => setOpen(true)} style={{ flex: 1 }}>
+          <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{open ? "Your manager" : "Add your manager"}</Text>
+        </Pressable>
         {props.onCancel ? <Pressable accessibilityRole="button" onPress={props.onCancel}><Text style={{ fontSize: F.sm - 1, color: tokens.foregroundMuted }}>Cancel</Text></Pressable> : null}
       </View>
-      <TextInput testID="manager-search" value={query} onChangeText={setQuery} placeholder="Their name" placeholderTextColor={tokens.foregroundMuted}
+      {open ? <TextInput testID="manager-search" value={query} onChangeText={setQuery} placeholder="Their name" placeholderTextColor={tokens.foregroundMuted}
         onSubmitEditing={() => { if (query.trim() && people.length === 0) props.onPick({ name: query.trim(), slackUserId: null }); }}
-        style={[{ height: 28, paddingHorizontal: 8, borderRadius: 6, fontSize: F.sm, color: tokens.foreground, backgroundColor: withAlpha(tokens.foreground, 0.05) }, INPUT]} />
+        style={[{ height: 28, paddingHorizontal: 8, borderRadius: 6, fontSize: F.sm, color: tokens.foreground, backgroundColor: withAlpha(tokens.foreground, 0.05) }, INPUT]} /> : null}
       {people.map((person) => (
         <Pressable key={person.id} accessibilityRole="button" testID="manager-pick" onPress={() => props.onPick({ name: person.name, slackUserId: person.id })} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 2 }}>
           <Icon name="Plus" size={12} color={tokens.accentText} />
