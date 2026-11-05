@@ -30,6 +30,7 @@ import { cardStrings } from "./strings";
 import { taskTokens, type TaskTokens } from "./tokens";
 import { TagMark } from "./tag-mark";
 import { LinkedText } from "./linked-text";
+import { replyDrafts } from "./reply-drafts";
 import { workspaceColor } from "./workspace-color";
 import { modeIcon, THINKING_ICON } from "./mode-icons";
 import { BrandMark } from "./brand-mark";
@@ -405,7 +406,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
             </View>
           </>
         )}
-        {props.onReply && !card.subagent && !card.archived ? <ReplyBox key={card.id} docked onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
+        {props.onReply && !card.subagent && !card.archived ? <ReplyBox key={card.id} draftKey={card.id} docked onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
         {props.actions !== false ? <View style={{ paddingBottom: 10 }}><DetailActionBar {...props} sidebar contentUnder={underBar} /></View> : null}
       </View>
     );
@@ -617,13 +618,29 @@ function pastedImages(event: { clipboardData?: { items?: ArrayLike<{ kind: strin
  * sends, Shift+Enter breaks the line; on web, Ctrl/Cmd+V pastes images as in
  * the agent's own tab. `docked` is the sidebar's: pinned under the messages.
  */
-function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<void>; tokens: TaskTokens; language: TasksLanguage; running: boolean; docked?: boolean }) {
+function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<void>; tokens: TaskTokens; language: TasksLanguage; running: boolean; docked?: boolean; /** The agent the draft is kept for. */ draftKey: string }) {
   const { tokens } = props;
   const zh = props.language === "zh";
   const toast = useToast();
-  const [text, setText] = useState("");
-  const [images, setImages] = useState<ReplyImage[]>([]);
+  // An unsent reply is kept per agent, as it is typed: leaving the card or the window loses nothing.
+  const drafts = replyDrafts();
+  const [text, setText] = useState(() => drafts.get(props.draftKey)?.text ?? "");
+  const [images, setImages] = useState<ReplyImage[]>(() => drafts.get(props.draftKey)?.images ?? []);
   const [sending, setSending] = useState(false);
+  const touched = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    void drafts.load().then(() => {
+      const saved = drafts.get(props.draftKey);
+      if (alive && saved && !touched.current) { setText(saved.text); setImages(saved.images); }
+    });
+    return () => { alive = false; };
+  }, [drafts, props.draftKey]);
+  useEffect(() => {
+    if (!touched.current) return;
+    drafts.set(props.draftKey, { text, images });
+  }, [drafts, props.draftKey, text, images]);
+  const edit = useCallback((next: string) => { touched.current = true; setText(next); }, []);
   const [focused, setFocused] = useState(false);
   const [height, setHeight] = useState(44);
   const input = useRef<unknown>(null);
@@ -636,7 +653,7 @@ function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<
       const hasImage = Array.from(paste.clipboardData?.items ?? []).some((item) => item.kind === "file" && item.type.startsWith("image/"));
       if (!hasImage) return;
       event.preventDefault();
-      void pastedImages(paste).then((added) => setImages((current) => [...current, ...added].slice(0, 8)));
+      void pastedImages(paste).then((added) => { touched.current = true; setImages((current) => [...current, ...added].slice(0, 8)); });
     };
     node.addEventListener("paste", onPaste);
     return () => node.removeEventListener?.("paste", onPaste);
@@ -646,6 +663,8 @@ function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<
     if ((!message && images.length === 0) || sending) return;
     setSending(true);
     props.onReply(message || (zh ? "（见图片）" : "(see image)"), images).then(() => {
+      touched.current = false;
+      drafts.clear(props.draftKey);
       setText("");
       setImages([]);
       setHeight(44);
@@ -653,7 +672,7 @@ function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<
     }, (error: unknown) => {
       toast.error(zh ? `发送失败：${error instanceof Error ? error.message : String(error)}` : `Could not send: ${error instanceof Error ? error.message : String(error)}`);
     }).finally(() => setSending(false));
-  }, [text, images, sending, props.onReply, toast, zh]);
+  }, [text, images, sending, props.onReply, props.draftKey, drafts, toast, zh]);
   const empty = text.trim().length === 0 && images.length === 0;
   const tint = withAlpha(tokens.accent, tokens.isDark ? 0.12 : 0.06);
   return (
@@ -668,7 +687,7 @@ function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<
           {images.map((image, index) => (
             <View key={index} style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: tokens.card.border }}>
               <Image source={{ uri: `data:${image.mimeType};base64,${image.data}` }} style={{ width: 56, height: 56 }} resizeMode="cover" />
-              <Pressable accessibilityRole="button" accessibilityLabel={zh ? "移除图片" : "Remove image"} onPress={() => setImages((current) => current.filter((_, at) => at !== index))}
+              <Pressable accessibilityRole="button" accessibilityLabel={zh ? "移除图片" : "Remove image"} onPress={() => { touched.current = true; setImages((current) => current.filter((_, at) => at !== index)); }}
                 style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.6)" }}>
                 <Icon name="X" size={11} color="#ffffff" />
               </Pressable>
@@ -681,7 +700,7 @@ function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<
           ref={input as never}
           testID="detail-reply-input"
           value={text}
-          onChangeText={setText}
+          onChangeText={edit}
           editable={!sending}
           multiline
           onFocus={() => setFocused(true)}
@@ -1247,7 +1266,7 @@ function Section(props: Inner & { section: DetailSection; closed: boolean; divid
         ) : section === "message" ? (
           <>
             <TimelineTextBody {...props} read={props.lastMessage} id="detail-message" none={words.messageNone} error={words.messageError} copyLabel={words.copyMessage} copyToast="Copy message" flash />
-            {props.onReply && !props.tabs && !card.subagent && !card.archived ? <ReplyBox key={card.id} onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
+            {props.onReply && !props.tabs && !card.subagent && !card.archived ? <ReplyBox key={card.id} draftKey={card.id} onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
           </>
         ) : section === "properties" ? (
           <Properties {...props} />

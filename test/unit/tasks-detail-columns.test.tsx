@@ -128,6 +128,48 @@ describe("details columns", () => {
     await act(async () => host(renderer!.root, "detail-pending-submit").props.onPress());
     expect(onAnswer).toHaveBeenLastCalledWith({ "Where?": "Somewhere else" });
   });
+  it("keeps an unsent reply per agent when the details close, and clears it once sent", async () => {
+    const written: string[] = [];
+    (globalThis as Record<string, unknown>).__betterPaseoDraftStorageForTests = { read: () => null, write: (value: string) => { written.push(value); } };
+    delete (globalThis as Record<string, unknown>).__betterPaseoReplyDrafts;
+    vi.useFakeTimers();
+    try {
+      const base = props(false);
+      const onReply = vi.fn(() => Promise.resolve());
+      const draw = (card = base.card) => <TaskDetailCards {...base} card={card} columns={false} tabs scrollHeader onReply={onReply} />;
+      await act(async () => { renderer = TestRenderer.create(draw()); });
+      const input = () => host(renderer!.root, "detail-reply-input");
+      await act(async () => input().props.onChangeText("half-written reply"));
+      await act(async () => { vi.advanceTimersByTime(400); });
+      expect(JSON.parse(written.at(-1)!)[base.card.id].text).toBe("half-written reply");
+      // Away and back: another card, then this one again.
+      await act(async () => { renderer!.update(draw({ ...base.card, id: "other-agent" })); });
+      expect(input().props.value).toBe("");
+      await act(async () => { renderer!.update(draw()); });
+      expect(input().props.value).toBe("half-written reply");
+      await act(async () => { host(renderer!.root, "detail-reply-send").props.onPress(); });
+      expect(onReply).toHaveBeenCalledWith("half-written reply", []);
+      expect(input().props.value).toBe("");
+      expect(JSON.parse(written.at(-1)!)[base.card.id]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      delete (globalThis as Record<string, unknown>).__betterPaseoDraftStorageForTests;
+      delete (globalThis as Record<string, unknown>).__betterPaseoReplyDrafts;
+    }
+  });
+  it("brings a saved reply back after the app restarts", async () => {
+    const base = props(false);
+    (globalThis as Record<string, unknown>).__betterPaseoDraftStorageForTests = { read: () => JSON.stringify({ [base.card.id]: { text: "from yesterday", at: Date.now() } }), write: () => undefined };
+    delete (globalThis as Record<string, unknown>).__betterPaseoReplyDrafts;
+    try {
+      await act(async () => { renderer = TestRenderer.create(<TaskDetailCards {...base} columns={false} tabs scrollHeader onReply={() => Promise.resolve()} />); });
+      await act(async () => { await Promise.resolve(); });
+      expect(host(renderer!.root, "detail-reply-input").props.value).toBe("from yesterday");
+    } finally {
+      delete (globalThis as Record<string, unknown>).__betterPaseoDraftStorageForTests;
+      delete (globalThis as Record<string, unknown>).__betterPaseoReplyDrafts;
+    }
+  });
   it("uses larger detail tabs on desktop", async () => {
     await act(async () => {
       renderer = TestRenderer.create(<TaskDetailCards {...props(false)} touch={false} columns={false} tabs />);

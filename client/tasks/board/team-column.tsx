@@ -10,6 +10,7 @@ import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { LinkedText } from "../cards/linked-text";
 import { formatRelative } from "../cards/format";
 import { localDay } from "./todo-model";
+import { hashColor } from "../cards/workspace-color";
 import {
   type Member, type Suggestion, type TeamStatus, type TeamTask, TEAM_STATUSES,
   teamAddUpdateRpc, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
@@ -173,8 +174,9 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
           const counts = memberCounts(group.tasks, today);
           return (
             <View key={group.id ?? "none"} testID={`team-group-${group.id ?? "none"}`} style={{ gap: 4 }}>
-              <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8, paddingTop: 2 }}>
-                <Text style={{ fontSize: F.base, fontWeight: "700", color: group.id ? tokens.foreground : tokens.foregroundMuted }}>{group.name}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 2 }}>
+                {group.id ? <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: hashColor(group.id, tokens.isDark) }} /> : null}
+                <Text style={{ fontSize: F.base, fontWeight: "700", color: group.id ? hashColor(group.id, tokens.isDark) : tokens.foregroundMuted }}>{group.name}</Text>
                 {group.role ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{group.role}</Text> : null}
                 <View style={{ flex: 1 }} />
                 <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{`${counts.open} open`}</Text>
@@ -183,7 +185,7 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
               </View>
               {shown.length === 0 ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>Nothing assigned.</Text> : null}
               {shown.map((task) => (
-                <TaskRow key={task.id} task={task} tokens={tokens} today={today} members={members} open={open === task.id}
+                <TaskRow key={task.id} task={task} tokens={tokens} today={today} members={members} open={open === task.id} tint={group.id ? hashColor(group.id, tokens.isDark) : null}
                   onToggle={() => setOpen((current) => (current === task.id ? null : task.id))}
                   onPatch={(change) => patch(task.id, change)}
                   onUpdate={(text) => { void rpc.current.update({ id: task.id, text }).then((result) => upsert(result.task), fail); }}
@@ -237,6 +239,8 @@ function TaskRow(props: {
   today: string;
   members: Member[];
   open: boolean;
+  /** The assignee's colour, as a stripe down the left edge. */
+  tint: string | null;
   onToggle(): void;
   onPatch(change: { title?: string; notes?: string; assigneeId?: string | null; status?: TeamStatus; due?: string | null; topic?: string }): void;
   onUpdate(text: string): void;
@@ -254,7 +258,8 @@ function TaskRow(props: {
   const color = statusColor(task.status, tokens);
   const field = [{ fontSize: F.sm, color: tokens.foreground, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, backgroundColor: withAlpha(tokens.foreground, 0.05) }, INPUT];
   return (
-    <View testID={`team-task-${task.id}`} style={{ borderRadius: 9, borderWidth: 1, borderColor: props.open ? withAlpha(tokens.accent, 0.6) : tokens.card.border, backgroundColor: tokens.card.background, paddingHorizontal: 8, paddingVertical: 6, gap: 6, opacity: task.status === "done" && !props.open ? 0.55 : 1 }}>
+    <View testID={`team-task-${task.id}`} style={{ borderRadius: 9, borderWidth: 1, borderColor: props.open ? withAlpha(props.tint ?? tokens.accent, 0.7) : tokens.card.border, backgroundColor: tokens.card.background, paddingHorizontal: 8, paddingLeft: 11, paddingVertical: 6, gap: 6, opacity: task.status === "done" && !props.open ? 0.55 : 1, overflow: "hidden" }}>
+      {props.tint ? <View pointerEvents="none" testID="team-task-tint" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: props.tint }} /> : null}
       <Pressable accessibilityRole="button" accessibilityLabel={props.open ? `Close ${task.title}` : `Open ${task.title}`} onPress={props.onToggle} style={{ gap: 2 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
           <View style={{ paddingHorizontal: 6, height: 18, borderRadius: 5, justifyContent: "center", backgroundColor: withAlpha(color, 0.16) }}>
@@ -276,7 +281,7 @@ function TaskRow(props: {
             {TEAM_STATUSES.map((status) => <Chip key={status} label={STATUS_LABEL[status]} on={task.status === status} color={statusColor(status, tokens)} tokens={tokens} testID={`team-status-${status}`} onPress={() => props.onPatch({ status })} />)}
           </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-            {props.members.map((member) => <Chip key={member.id} label={member.name} on={task.assigneeId === member.id} tokens={tokens} onPress={() => props.onPatch({ assigneeId: task.assigneeId === member.id ? null : member.id })} />)}
+            {props.members.map((member) => <Chip key={member.id} label={member.name} on={task.assigneeId === member.id} color={hashColor(member.id, tokens.isDark)} tokens={tokens} onPress={() => props.onPatch({ assigneeId: task.assigneeId === member.id ? null : member.id })} />)}
           </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
             {dueChoices(props.today).map((choice) => <Chip key={choice.label} label={choice.label} on={task.due === choice.value} tokens={tokens} onPress={() => props.onPatch({ due: choice.value })} />)}
@@ -325,7 +330,7 @@ function AddTask(props: { members: Member[]; tokens: TaskTokens; today: string; 
         style={[{ fontSize: F.sm, color: tokens.foreground, height: 32, paddingHorizontal: 8, borderRadius: 6, backgroundColor: withAlpha(tokens.foreground, 0.05) }, INPUT]} />
       {props.members.length > 0 ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-          {props.members.map((member) => <Chip key={member.id} label={member.name} on={assigneeId === member.id} tokens={tokens} testID={`team-add-assignee-${member.id}`} onPress={() => setAssigneeId((current) => (current === member.id ? null : member.id))} />)}
+          {props.members.map((member) => <Chip key={member.id} label={member.name} on={assigneeId === member.id} color={hashColor(member.id, tokens.isDark)} tokens={tokens} testID={`team-add-assignee-${member.id}`} onPress={() => setAssigneeId((current) => (current === member.id ? null : member.id))} />)}
         </View>
       ) : null}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
@@ -392,6 +397,7 @@ function MembersEditor(props: {
       <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.foreground }}>Team members</Text>
       {props.members.map((member) => (
         <View key={member.id} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: hashColor(member.id, tokens.isDark) }} />
           <Icon name={member.slackUserId ? "Slack" : "User"} size={12} color={member.slackUserId ? "#7c3085" : tokens.foregroundMuted} />
           <Text style={{ flex: 1, fontSize: F.sm, color: tokens.foreground }}>{member.name}{member.role ? `  · ${member.role}` : ""}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${member.name}`} onPress={() => { if (removing === member.id) props.onDelete(member.id); else setRemoving(member.id); }} hitSlop={4}>

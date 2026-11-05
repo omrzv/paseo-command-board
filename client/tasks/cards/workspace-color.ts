@@ -10,6 +10,11 @@ import type { TaskLocation } from "../model";
 export function workspaceColor(location: Pick<TaskLocation, "workspaceId" | "workspaceTitle" | "projectKey" | "projectId" | "projectName">, isDark: boolean): string | null {
   const key = location.workspaceId ?? location.workspaceTitle ?? location.projectKey ?? location.projectId ?? location.projectName;
   if (!key) return null;
+  return hashColor(key, isDark);
+}
+
+/** A steady colour for any key (a workspace, a team member), readable as text on a card. */
+export function hashColor(key: string, isDark: boolean): string {
   let hash = 2166136261;
   for (const character of key) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0;
   const hue = (hash * 137.508) % 360;
