@@ -30,6 +30,15 @@ describe("drag to reorder", () => {
     expect(dropTarget(5, "a", rows, headers)).toBeNull();
   });
 
+  it("in the gap between two rows, lands next to the nearest one, never at the end", () => {
+    // Rows a (100–140) and b (150–190): 145 is in the gap, nearer a's bottom half.
+    expect(dropTarget(144, "c", rows, headers)).toEqual({ group: "dana", index: 1 });
+    expect(dropTarget(147, "d", rows, headers)).toEqual({ group: "dana", index: 1 });
+    // A list without headers (My tasks).
+    expect(dropTarget(145, "c", rows.slice(0, 3), [])).toEqual({ group: "dana", index: 1 });
+    expect(dropTarget(400, "c", rows.slice(0, 3), [])).toBeNull();
+  });
+
   it("draws the drop line where the row will land", () => {
     const drag = { dragging: "c", target: { group: "dana", index: 1 } } as unknown as DragReorder;
     const items = [{ id: "a" }, { id: "b" }, { id: "c" }];

@@ -6,10 +6,14 @@ type Rect = { y: number; height: number };
 type Measurable = { measureInWindow?(callback: (x: number, y: number, width: number, height: number) => void): void };
 export type DropTarget = { group: string; index: number };
 
+/** How far from the nearest row or header a pointer may be and still drop. */
+const REACH = 48;
+
 /**
- * Where a row dropped at `y` goes: the position among the group's rows (the
- * dragged one left out), above a row's middle or below it; a group's header
- * takes it to that group's top. Null when `y` is over nothing.
+ * Where a row dropped at `y` goes: next to the nearest row (above its middle
+ * or below it), its position counted among the group's rows with the dragged
+ * one left out; on a group's header, that group's top. Null when the pointer
+ * is far from every row and header.
  */
 export function dropTarget(
   y: number,
@@ -17,27 +21,31 @@ export function dropTarget(
   rows: Array<{ key: string; group: string; rect: Rect }>,
   headers: Array<{ group: string; rect: Rect }>,
 ): DropTarget | null {
-  const others = rows.filter((row) => row.key !== dragged);
-  for (const row of others) {
-    if (y < row.rect.y || y > row.rect.y + row.rect.height) continue;
-    const siblings = others.filter((entry) => entry.group === row.group).sort((a, b) => a.rect.y - b.rect.y);
-    const position = siblings.indexOf(row);
-    return { group: row.group, index: y < row.rect.y + row.rect.height / 2 ? position : position + 1 };
-  }
   for (const header of headers) {
     if (y >= header.rect.y && y <= header.rect.y + header.rect.height) return { group: header.group, index: 0 };
   }
-  // Below a group's last row and above the next group's header: the end of that group.
-  const sorted = [...others].sort((a, b) => a.rect.y - b.rect.y);
-  const nextHeaderAt = (from: number) => Math.min(...headers.filter((header) => header.rect.y > from).map((header) => header.rect.y), Number.POSITIVE_INFINITY);
-  for (let index = sorted.length - 1; index >= 0; index--) {
-    const row = sorted[index]!;
-    const bottom = row.rect.y + row.rect.height;
-    if (y > bottom && y < nextHeaderAt(bottom) && y < bottom + 60) {
-      return { group: row.group, index: others.filter((entry) => entry.group === row.group).length };
-    }
+  const others = rows.filter((row) => row.key !== dragged);
+  const distance = (rect: Rect) => (y < rect.y ? rect.y - y : y > rect.y + rect.height ? y - rect.y - rect.height : 0);
+  let nearest: (typeof others)[number] | null = null;
+  for (const row of others) if (!nearest || distance(row.rect) < distance(nearest.rect)) nearest = row;
+  if (!nearest || distance(nearest.rect) > REACH) {
+    // An empty group: its header with some room under it.
+    const header = headers.find((entry) => y > entry.rect.y && y < entry.rect.y + entry.rect.height + REACH && !others.some((row) => row.group === entry.group));
+    return header ? { group: header.group, index: 0 } : null;
   }
-  return null;
+  const siblings = others.filter((row) => row.group === nearest!.group).sort((a, b) => a.rect.y - b.rect.y);
+  const position = siblings.indexOf(nearest);
+  return { group: nearest.group, index: y < nearest.rect.y + nearest.rect.height / 2 ? position : position + 1 };
+}
+
+/** On the web, a drag must not select the text it passes over. */
+function selection(allowed: boolean): void {
+  const page = globalThis as unknown as { document?: { body?: { style: Record<string, string> } }; getSelection?(): { removeAllRanges?(): void } | null };
+  const style = page.document?.body?.style;
+  if (!style) return;
+  style.userSelect = allowed ? "" : "none";
+  style.webkitUserSelect = allowed ? "" : "none";
+  if (!allowed) page.getSelection?.()?.removeAllRanges?.();
 }
 
 export interface DragReorder {
@@ -69,6 +77,7 @@ export function useDragReorder(onDrop: (key: string, target: DropTarget) => void
   });
 
   const start = useCallback((key: string, event: GestureResponderEvent) => {
+    selection(false);
     const state = { key, startY: event.nativeEvent.pageY, rows: [] as Array<{ key: string; group: string; rect: Rect }>, headers: [] as Array<{ group: string; rect: Rect }>, target: null };
     live.current = state;
     setDragging(key);
@@ -89,6 +98,7 @@ export function useDragReorder(onDrop: (key: string, target: DropTarget) => void
   }, []);
 
   const end = useCallback((commit: boolean) => {
+    selection(true);
     const state = live.current;
     live.current = null;
     setDragging(null);
@@ -130,7 +140,7 @@ export function useDragReorder(onDrop: (key: string, target: DropTarget) => void
 export function DragHandle(props: { drag: DragReorder; dragKey: string; color: string }) {
   return (
     <View {...props.drag.handle(props.dragKey)} accessibilityLabel="Drag to move" testID="drag-handle"
-      style={{ width: 16, alignSelf: "stretch", alignItems: "center", justifyContent: "center", cursor: "grab" } as object}>
+      style={{ width: 16, alignSelf: "stretch", alignItems: "center", justifyContent: "center", cursor: "grab", userSelect: "none" } as object}>
       <Icon name="GripVertical" size={13} color={props.color} />
     </View>
   );
