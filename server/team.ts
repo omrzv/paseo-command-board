@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   type Member, type TeamFile, type TeamTask, teamFileSchema,
-  teamAddUpdateRpc, teamAgendaRpc, teamSetManagerRpc, MEMBER_COLORS, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
+  teamAddUpdateRpc, teamAgendaRpc, teamReorderRpc, teamSetManagerRpc, MEMBER_COLORS, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
 } from "../shared/team-rpc";
 import { pluginDataDir } from "./plugin-data";
 import { type SlackCall, slackApi, slackPath } from "./slack";
@@ -73,7 +73,7 @@ export function createTeamStore(path = teamPath(), now: () => number = Date.now)
 
   const newTask = (fields: Partial<TeamTask> & { title: string }): TeamTask => ({
     id: randomUUID(), notes: "", assigneeId: null, status: "todo", due: null, topic: "", links: [], updates: [],
-    createdAt: now(), updatedAt: now(), doneAt: null, lastAskedAt: null, ...fields,
+    createdAt: now(), updatedAt: now(), doneAt: null, lastAskedAt: null, order: null, ...fields,
   });
 
   return {
@@ -134,7 +134,8 @@ export function createTeamStore(path = teamPath(), now: () => number = Date.now)
       if (changes.title !== undefined) changes.title = changes.title.trim();
       if (!id) {
         if (!changes.title) throw new Error("A task needs a title");
-        const task = newTask({ ...changes, title: changes.title, ...(changes.status === "done" ? { doneAt: now() } : {}) });
+        const group = file.tasks.filter((entry) => entry.assigneeId === (changes.assigneeId ?? null));
+        const task = newTask({ ...changes, title: changes.title, order: Math.min(1, ...group.map((entry) => entry.order ?? 1)) - 1, ...(changes.status === "done" ? { doneAt: now() } : {}) });
         file.tasks.push(task);
         await persist();
         return task;
@@ -151,6 +152,24 @@ export function createTeamStore(path = teamPath(), now: () => number = Date.now)
       Object.assign(task, changes, { updatedAt: now() });
       await persist();
       return task;
+    },
+    async reorder(assigneeId: string | null, ids: string[]): Promise<TeamTask[]> {
+      const file = await load();
+      const name = assigneeId ? file.members.find((member) => member.id === assigneeId)?.name ?? "nobody" : "nobody";
+      const moved: TeamTask[] = [];
+      ids.forEach((id, index) => {
+        const task = file.tasks.find((entry) => entry.id === id);
+        if (!task) return;
+        if (task.assigneeId !== assigneeId) {
+          task.updates.push({ at: now(), text: `Assigned to ${name}`, by: "me" });
+          task.assigneeId = assigneeId;
+          task.updatedAt = now();
+        }
+        task.order = index;
+        moved.push(task);
+      });
+      await persist();
+      return moved;
     },
     async deleteTask(id: string) {
       const file = await load();
@@ -227,6 +246,7 @@ export function registerTeamServer(server: PluginServerContext, store = createTe
   server.handle(teamSaveMemberRpc, async (input) => ({ member: await store.saveMember(input) }));
   server.handle(teamDeleteMemberRpc, async ({ id }) => ({ ok: await store.deleteMember(id) }));
   server.handle(teamSaveTaskRpc, async (input) => ({ task: await store.saveTask(input) }));
+  server.handle(teamReorderRpc, async ({ assigneeId, ids }) => ({ tasks: await store.reorder(assigneeId, ids) }));
   server.handle(teamDeleteTaskRpc, async ({ id }) => ({ ok: await store.deleteTask(id) }));
   server.handle(teamAddUpdateRpc, async ({ id, text }) => ({ task: await store.addUpdate(id, text) }));
   server.handle(teamSuggestionRpc, async ({ id, accept }) => ({ task: await store.suggestion(id, accept) }));

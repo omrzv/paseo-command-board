@@ -3,7 +3,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { z } from "zod";
-import { type Todo, todoSchema, todosAddRpc, todosDeleteRpc, todosListRpc, todosUpdateRpc } from "../shared/todos-rpc";
+import { type Todo, todoSchema, todosAddRpc, todosDeleteRpc, todosListRpc, todosReorderRpc, todosUpdateRpc } from "../shared/todos-rpc";
+import { byDue } from "../client/tasks/board/todo-model";
 import { pluginDataDir } from "./plugin-data";
 
 /** Done to-dos stay listed this long, so a mistaken tick can be undone. */
@@ -26,6 +27,8 @@ export function createTodoStore(path = todosPath(), now: () => number = Date.now
     try {
       const parsed = z.object({ todos: z.array(todoSchema) }).safeParse(JSON.parse(await readFile(path, "utf8")));
       todos = parsed.success ? parsed.data.todos : [];
+      // To-dos from before ordering keep the order they were shown in (by day).
+      if (todos.some((todo) => todo.order === null)) [...todos].sort(byDue).forEach((todo, index) => { todo.order ??= index + 1; });
     } catch {
       todos = [];
     }
@@ -58,6 +61,8 @@ export function createTodoStore(path = todosPath(), now: () => number = Date.now
       const todo: Todo = {
         id: randomUUID(), title: input.title.trim(), notes: input.notes ?? "", due: due(input.due), done: false, createdAt: now(), doneAt: null,
         links: input.links ?? [], source: input.source ?? null, agentId: null,
+        // New ones go on top.
+        order: Math.min(1, ...list.map((entry) => entry.order ?? 1)) - 1,
       };
       list.push(todo);
       await persist();
@@ -77,6 +82,12 @@ export function createTodoStore(path = todosPath(), now: () => number = Date.now
       await persist();
       return todo;
     },
+    async reorder(ids: string[]): Promise<boolean> {
+      const list = await load();
+      ids.forEach((id, index) => { const todo = list.find((entry) => entry.id === id); if (todo) todo.order = index; });
+      await persist();
+      return true;
+    },
     async remove(id: string): Promise<boolean> {
       const list = await load();
       const index = list.findIndex((entry) => entry.id === id);
@@ -92,5 +103,6 @@ export function registerTodosServer(server: PluginServerContext, store = createT
   server.handle(todosListRpc, async () => ({ todos: await store.list() }));
   server.handle(todosAddRpc, async (input) => ({ todo: await store.add(input) }));
   server.handle(todosUpdateRpc, async (input) => ({ todo: await store.update(input) }));
+  server.handle(todosReorderRpc, async ({ ids }) => ({ ok: await store.reorder(ids) }));
   server.handle(todosDeleteRpc, async ({ id }) => ({ ok: await store.remove(id) }));
 }

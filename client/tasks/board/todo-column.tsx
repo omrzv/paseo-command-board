@@ -7,13 +7,16 @@ import { withAlpha } from "../../components/theme-tokens";
 import { TaskText as Text, HOST_FONT as F } from "../typography";
 import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { LinkedText } from "../cards/linked-text";
-import { localDay, sortTodos } from "./todo-model";
+import { localDay, moveId, sortTodos } from "./todo-model";
 import { onTodosChanged } from "./todo-events";
 import { StartAgentDialog } from "./start-agent";
 import { SlackReply } from "./slack-column";
 import { openLink } from "../../components/open-link";
 import type { PaseoApi } from "@getpaseo/client";
-import { type Todo, todosAddRpc, todosDeleteRpc, todosListRpc, todosUpdateRpc } from "../../../shared/todos-rpc";
+import { type Todo, todosAddRpc, todosDeleteRpc, todosListRpc, todosReorderRpc, todosUpdateRpc } from "../../../shared/todos-rpc";
+import { type Member, memberColor, teamListRpc, teamSaveTaskRpc } from "../../../shared/team-rpc";
+import { DragHandle, useDragReorder, withDropLines, type DragReorder } from "./drag-reorder";
+import { teamChanged } from "./team-events";
 
 const POLL_MS = 30_000;
 const COLLAPSED_WIDTH = 40;
@@ -41,8 +44,12 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
   const addNow = useRpc(todosAddRpc);
   const updateNow = useRpc(todosUpdateRpc);
   const removeNow = useRpc(todosDeleteRpc);
-  const rpc = useRef({ list: listNow, add: addNow, update: updateNow, remove: removeNow });
-  rpc.current = { list: listNow, add: addNow, update: updateNow, remove: removeNow };
+  const reorderNow = useRpc(todosReorderRpc);
+  const teamNow = useRpc(teamListRpc);
+  const giveNow = useRpc(teamSaveTaskRpc);
+  const rpc = useRef({ list: listNow, add: addNow, update: updateNow, remove: removeNow, reorder: reorderNow, team: teamNow, give: giveNow });
+  rpc.current = { list: listNow, add: addNow, update: updateNow, remove: removeNow, reorder: reorderNow, team: teamNow, give: giveNow };
+  const [members, setMembers] = useState<Member[]>([]);
   const [todos, setTodos] = useState<Todo[] | null>(null);
   const [draft, setDraft] = useState("");
   const [collapsed, setCollapsed] = useState(false);
@@ -63,6 +70,7 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
     }).catch(() => {
       // An older server without to-dos: the column stays away.
     });
+    void rpc.current.team({}).then((result) => { if (alive.current && Array.isArray(result?.members)) setMembers(result.members); }, () => undefined);
   }, []);
 
   useEffect(() => {
@@ -84,6 +92,26 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
     if (!title) return;
     setDraft("");
     void rpc.current.add({ title }).then((result) => setTodos((current) => [...(current ?? []), result.todo]), refresh);
+  };
+
+  // Drag a to-do by its grip to put it where you want it.
+  const drag = useDragReorder((id, target) => {
+    setTodos((current) => {
+      if (!current) return current;
+      const ids = moveId(sortTodos(current.filter((todo) => !todo.done)).map((todo) => todo.id), id, target.index);
+      void rpc.current.reorder({ ids }).catch(refresh);
+      return current.map((todo) => { const at = ids.indexOf(todo.id); return at >= 0 ? { ...todo, order: at } : todo; });
+    });
+  });
+  /** The to-do becomes a team task for that person, keeping its notes and links. */
+  const give = (todo: Todo, memberId: string) => {
+    const notes = [todo.notes.trim(), todo.source ? `From ${todo.source.from} in ${todo.source.where} on Slack` : ""].filter(Boolean).join("\n\n");
+    void rpc.current.give({ title: todo.title, notes, assigneeId: memberId, links: [...todo.links, ...(todo.source ? [todo.source.permalink] : [])].slice(0, 30), ...(todo.due ? { due: todo.due } : {}) }).then(() => {
+      setTodos((current) => current?.filter((entry) => entry.id !== todo.id) ?? current);
+      void rpc.current.remove({ id: todo.id });
+      teamChanged();
+      setStartedNote(`Given to ${members.find((member) => member.id === memberId)?.name ?? "the team"}: ${todo.title}`);
+    }, refresh);
   };
 
   const shown = todos !== null;
@@ -138,8 +166,8 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
       {startedNote ? <Text testID="todo-started-note" numberOfLines={2} style={{ marginRight: 8, marginBottom: 6, fontSize: F.sm, color: tokens.success }}>{startedNote}</Text> : null}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 6, paddingRight: 8, paddingBottom: 16 }}>
         {openTodos.length === 0 ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted, paddingVertical: 8 }}>Nothing to remember. Add anything above.</Text> : null}
-        {openTodos.map((todo) => (
-          <TodoRow key={todo.id} todo={todo} tokens={tokens} open={open === todo.id} today={today} tomorrow={tomorrow}
+        {withDropLines(openTodos, drag, "todos", tokens.accent, (todo) => (
+          <TodoRow key={todo.id} todo={todo} tokens={tokens} open={open === todo.id} today={today} tomorrow={tomorrow} drag={drag} members={members} onGive={(memberId) => give(todo, memberId)}
             onToggleOpen={() => setOpen((current) => (current === todo.id ? null : todo.id))} onPatch={(change) => patch(todo.id, change)}
             onRemove={() => { setTodos((current) => current?.filter((entry) => entry.id !== todo.id) ?? current); void rpc.current.remove({ id: todo.id }).catch(refresh); }}
             onStartAgent={props.paseo ? () => setStarting(todo) : undefined} onOpenAgent={props.onOpenAgent} />
@@ -186,6 +214,10 @@ function TodoRow(props: {
   onRemove(): void;
   onStartAgent?(): void;
   onOpenAgent?(agentId: string): void;
+  /** Open to-dos are dragged by their grip. */
+  drag?: DragReorder;
+  members?: Member[];
+  onGive?(memberId: string): void;
 }) {
   const { todo, tokens } = props;
   const [title, setTitle] = useState(todo.title);
@@ -203,8 +235,9 @@ function TodoRow(props: {
     { label: "No date", value: null },
   ];
   return (
-    <View testID={`todo-${todo.id}`} style={{ borderRadius: 10, borderWidth: 1, borderColor: props.open ? withAlpha(tokens.accent, 0.6) : tokens.card.border, backgroundColor: tokens.card.background, padding: 8, gap: 6, opacity: todo.done && !props.open ? 0.6 : 1 }}>
+    <View ref={props.drag ? (props.drag.row(todo.id, "todos") as never) : undefined} collapsable={false} testID={`todo-${todo.id}`} style={{ borderRadius: 10, borderWidth: 1, borderColor: props.open ? withAlpha(tokens.accent, 0.6) : tokens.card.border, backgroundColor: tokens.card.background, padding: 8, paddingLeft: props.drag ? 2 : 8, gap: 6, opacity: props.drag?.dragging === todo.id ? 0.4 : todo.done && !props.open ? 0.6 : 1 }}>
       <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+        {props.drag ? <DragHandle drag={props.drag} dragKey={todo.id} color={withAlpha(tokens.foregroundMuted, 0.7)} /> : null}
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: todo.done }} accessibilityLabel={todo.done ? "Mark not done" : "Mark done"} onPress={() => props.onPatch({ done: !todo.done })} hitSlop={6}
           style={{ marginTop: 2, width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: todo.done ? tokens.success : overdue ? tokens.danger : tokens.foregroundMuted, backgroundColor: todo.done ? tokens.success : "transparent", alignItems: "center", justifyContent: "center" }}>
           {todo.done ? <Icon name="Check" size={11} color="#ffffff" /> : null}
@@ -270,6 +303,17 @@ function TodoRow(props: {
               onSent={() => { setReplying(false); setSent(true); }} />
           ) : null}
           {sent ? <Text testID="todo-slack-sent" style={{ fontSize: F.sm, color: tokens.success }}>Sent to Slack.</Text> : null}
+          {props.onGive && props.members?.length && !todo.done ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
+              <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>Give to</Text>
+              {props.members.map((member) => (
+                <Pressable key={member.id} accessibilityRole="button" testID={`todo-give-${member.id}`} onPress={() => props.onGive?.(member.id)}
+                  style={{ height: 22, paddingHorizontal: 8, borderRadius: 11, justifyContent: "center", borderWidth: 1, borderColor: memberColor(member, tokens.isDark) }}>
+                  <Text style={{ fontSize: F.sm - 1, color: memberColor(member, tokens.isDark), fontWeight: "600" }}>{member.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
             {days.map((day) => {
               const selected = todo.due === day.value;

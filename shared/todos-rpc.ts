@@ -17,6 +17,8 @@ export const todoSchema = z.object({
   source: z.object({ kind: z.literal("slack"), from: z.string(), where: z.string(), permalink: z.string(), slackId: z.string(), threadTs: z.string().optional(), direct: z.boolean().optional() }).nullable().default(null),
   /** The agent started from this task, once there is one. */
   agentId: z.string().nullable().default(null),
+  /** Your own order, top first; null until placed. */
+  order: z.number().nullable().default(null),
 });
 export type Todo = z.output<typeof todoSchema>;
 
@@ -37,6 +39,13 @@ export const todosAddRpc = defineRpc({
     source: todoSchema.shape.source.optional(),
   }),
   output: z.object({ todo: todoSchema }),
+});
+
+/** Puts the open to-dos in this order (the ids as listed). */
+export const todosReorderRpc = defineRpc({
+  name: "todos.reorder",
+  input: z.object({ ids: z.array(z.string()).max(1000) }),
+  output: z.object({ ok: z.boolean() }),
 });
 
 export const todosUpdateRpc = defineRpc({

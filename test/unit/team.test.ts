@@ -70,6 +70,22 @@ describe("team", () => {
     expect(freeColor(Array.from({ length: 10 }, (_, index) => ({ colorIndex: index })))).toBe(0);
   });
 
+  it("reorders a person's tasks and hands a task to someone else by dragging", async () => {
+    const { store } = await setup();
+    const dana = await store.saveMember({ name: "Dana" });
+    const yossi = await store.saveMember({ name: "Yossi" });
+    const one = await store.saveTask({ title: "one", assigneeId: dana.id });
+    const two = await store.saveTask({ title: "two", assigneeId: dana.id });
+    expect(two.order! < one.order!).toBe(true);
+    const moved = await store.reorder(yossi.id, [one.id]);
+    expect(moved[0]).toMatchObject({ assigneeId: yossi.id, order: 0 });
+    expect(moved[0]!.updates.at(-1)!.text).toBe("Assigned to Yossi");
+    await store.reorder(dana.id, [two.id]);
+    const listed = await store.list();
+    expect(listed.tasks.find((task) => task.id === two.id)).toMatchObject({ assigneeId: dana.id, order: 0 });
+    expect(listed.tasks.find((task) => task.id === two.id)!.updates).toEqual([]);
+  });
+
   it("keeps the manager and the points to raise with them", async () => {
     const { store } = await setup();
     expect((await store.list()).manager).toBeNull();

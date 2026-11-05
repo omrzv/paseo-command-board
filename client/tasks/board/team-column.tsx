@@ -9,11 +9,13 @@ import { TaskText as Text, HOST_FONT as F } from "../typography";
 import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { LinkedText } from "../cards/linked-text";
 import { formatRelative } from "../cards/format";
-import { localDay } from "./todo-model";
+import { localDay, moveId } from "./todo-model";
+import { DragHandle, useDragReorder, withDropLines, type DragReorder } from "./drag-reorder";
+import { onTeamChanged } from "./team-events";
 import { ManagerCard } from "./manager-card";
 import {
   type AgendaItem, type Manager, type Member, type Suggestion, type TeamStatus, type TeamTask, TEAM_STATUSES, memberColor,
-  teamAddUpdateRpc, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
+  teamAddUpdateRpc, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamReorderRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
 } from "../../../shared/team-rpc";
 
 const POLL_MS = 30_000;
@@ -35,9 +37,12 @@ function dueText(due: string, today: string): string {
 }
 
 /** Open tasks first by status (blocked, doing, to do), then by due day; done last. */
+/** Done last; otherwise your dragged order, and tasks never placed by status (blocked, doing, to do), then due day. */
 export function sortTeamTasks(tasks: TeamTask[]): TeamTask[] {
   return [...tasks].sort((left, right) =>
-    STATUS_RANK[left.status] - STATUS_RANK[right.status]
+    Number(left.status === "done") - Number(right.status === "done")
+    || (left.order ?? Number.POSITIVE_INFINITY) - (right.order ?? Number.POSITIVE_INFINITY)
+    || STATUS_RANK[left.status] - STATUS_RANK[right.status]
     || (left.due ?? "9999").localeCompare(right.due ?? "9999")
     || left.createdAt - right.createdAt);
 }
@@ -68,8 +73,9 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
   const saveMemberNow = useRpc(teamSaveMemberRpc);
   const deleteMemberNow = useRpc(teamDeleteMemberRpc);
   const peopleNow = useRpc(teamSlackPeopleRpc);
-  const rpc = useRef({ list: listNow, saveTask: saveTaskNow, deleteTask: deleteTaskNow, update: updateNow, suggestion: suggestionNow, saveMember: saveMemberNow, deleteMember: deleteMemberNow, people: peopleNow });
-  rpc.current = { list: listNow, saveTask: saveTaskNow, deleteTask: deleteTaskNow, update: updateNow, suggestion: suggestionNow, saveMember: saveMemberNow, deleteMember: deleteMemberNow, people: peopleNow };
+  const reorderNow = useRpc(teamReorderRpc);
+  const rpc = useRef({ list: listNow, saveTask: saveTaskNow, deleteTask: deleteTaskNow, update: updateNow, suggestion: suggestionNow, saveMember: saveMemberNow, deleteMember: deleteMemberNow, people: peopleNow, reorder: reorderNow });
+  rpc.current = { list: listNow, saveTask: saveTaskNow, deleteTask: deleteTaskNow, update: updateNow, suggestion: suggestionNow, saveMember: saveMemberNow, deleteMember: deleteMemberNow, people: peopleNow, reorder: reorderNow };
 
   const [members, setMembers] = useState<Member[] | null>(null);
   const [tasks, setTasks] = useState<TeamTask[]>([]);
@@ -98,6 +104,19 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
     const timer = setInterval(refresh, POLL_MS);
     return () => clearInterval(timer);
   }, [refresh, props.visible]);
+  useEffect(() => onTeamChanged(refresh), [refresh]);
+
+  // Drag a task by its grip: up or down within a person, or onto another person to hand it over.
+  const drag = useDragReorder((id, target) => {
+    const assigneeId = target.group === "none" ? null : target.group;
+    setTasks((current) => {
+      const known = new Set((members ?? []).map((member) => member.id));
+      const inGroup = (task: TeamTask) => (assigneeId === null ? task.assigneeId === null || !known.has(task.assigneeId) : task.assigneeId === assigneeId);
+      const ids = moveId(sortTeamTasks(current.filter((task) => task.status !== "done" && inGroup(task))).map((task) => task.id), id, target.index);
+      void rpc.current.reorder({ assigneeId, ids }).then((result) => setTasks((now) => [...now.filter((task) => !result.tasks.some((moved) => moved.id === task.id)), ...result.tasks]), (caught) => { fail(caught); refresh(); });
+      return current.map((task) => { const at = ids.indexOf(task.id); return at >= 0 ? { ...task, assigneeId, order: at } : task; });
+    });
+  });
 
   const fail = (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught));
   const upsert = (task: TeamTask) => setTasks((current) => [...current.filter((entry) => entry.id !== task.id), task]);
@@ -174,11 +193,14 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
         ) : null}
         {groups.map((group) => {
           const shown = sortTeamTasks(group.tasks.filter((task) => showDone || task.status !== "done"));
-          if (group.id === null && shown.length === 0) return null;
+          const groupKey = group.id ?? "none";
+          const openShown = shown.filter((task) => task.status !== "done");
+          const doneShown = shown.filter((task) => task.status === "done");
+          if (group.id === null && shown.length === 0 && !drag.dragging) return null;
           const counts = memberCounts(group.tasks, today);
           return (
             <View key={group.id ?? "none"} testID={`team-group-${group.id ?? "none"}`} style={{ gap: 4 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 2 }}>
+              <View ref={drag.header(groupKey) as never} collapsable={false} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 2, borderRadius: 6, backgroundColor: drag.dragging && drag.target?.group === groupKey ? withAlpha(group.color ?? tokens.accent, 0.12) : "transparent" }}>
                 {group.color ? <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: group.color }} /> : null}
                 <Text style={{ fontSize: F.base, fontWeight: "700", color: group.color ?? tokens.foregroundMuted }}>{group.name}</Text>
                 {group.role ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{group.role}</Text> : null}
@@ -188,15 +210,18 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
                 {counts.overdue ? <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.status.warning }}>{`${counts.overdue} late`}</Text> : null}
               </View>
               {shown.length === 0 ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>Nothing assigned.</Text> : null}
-              {shown.map((task) => (
-                <TaskRow key={task.id} task={task} tokens={tokens} today={today} members={members} open={open === task.id} tint={group.color}
+              {[...withDropLines(openShown, drag, groupKey, group.color ?? tokens.accent, (task) => renderTask(task, true)), ...doneShown.map((task) => renderTask(task, false))]}
+            </View>
+          );
+          function renderTask(task: TeamTask, draggable: boolean) {
+            return (
+                <TaskRow key={task.id} task={task} tokens={tokens} today={today} members={members ?? []} open={open === task.id} tint={group.color} drag={draggable ? drag : undefined} group={groupKey}
                   onToggle={() => setOpen((current) => (current === task.id ? null : task.id))}
                   onPatch={(change) => patch(task.id, change)}
                   onUpdate={(text) => { void rpc.current.update({ id: task.id, text }).then((result) => upsert(result.task), fail); }}
                   onDelete={() => { setTasks((current) => current.filter((entry) => entry.id !== task.id)); void rpc.current.deleteTask({ id: task.id }).catch(fail); }} />
-              ))}
-            </View>
-          );
+            );
+          }
         })}
         {doneCount > 0 ? (
           <Pressable accessibilityRole="button" onPress={() => setShowDone((was) => !was)} style={{ paddingVertical: 4 }}>
@@ -249,6 +274,9 @@ function TaskRow(props: {
   open: boolean;
   /** The assignee's colour, as a stripe down the left edge. */
   tint: string | null;
+  /** Open tasks are dragged by their grip. */
+  drag?: DragReorder;
+  group: string;
   onToggle(): void;
   onPatch(change: { title?: string; notes?: string; assigneeId?: string | null; status?: TeamStatus; due?: string | null; topic?: string }): void;
   onUpdate(text: string): void;
@@ -266,9 +294,11 @@ function TaskRow(props: {
   const color = statusColor(task.status, tokens);
   const field = [{ fontSize: F.sm, color: tokens.foreground, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, backgroundColor: withAlpha(tokens.foreground, 0.05) }, INPUT];
   return (
-    <View testID={`team-task-${task.id}`} style={{ borderRadius: 9, borderWidth: 1, borderColor: props.open ? withAlpha(props.tint ?? tokens.accent, 0.7) : tokens.card.border, backgroundColor: tokens.card.background, paddingHorizontal: 8, paddingLeft: 11, paddingVertical: 6, gap: 6, opacity: task.status === "done" && !props.open ? 0.55 : 1, overflow: "hidden" }}>
+    <View ref={props.drag ? (props.drag.row(task.id, props.group) as never) : undefined} collapsable={false} testID={`team-task-${task.id}`} style={{ borderRadius: 9, borderWidth: 1, borderColor: props.open ? withAlpha(props.tint ?? tokens.accent, 0.7) : tokens.card.border, backgroundColor: tokens.card.background, paddingHorizontal: 8, paddingLeft: 11, paddingVertical: 6, gap: 6, opacity: props.drag?.dragging === task.id ? 0.4 : task.status === "done" && !props.open ? 0.55 : 1, overflow: "hidden" }}>
       {props.tint ? <View pointerEvents="none" testID="team-task-tint" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: props.tint }} /> : null}
-      <Pressable accessibilityRole="button" accessibilityLabel={props.open ? `Close ${task.title}` : `Open ${task.title}`} onPress={props.onToggle} style={{ gap: 2 }}>
+      <View style={{ flexDirection: "row", gap: 4 }}>
+      {props.drag ? <DragHandle drag={props.drag} dragKey={task.id} color={withAlpha(tokens.foregroundMuted, 0.7)} /> : null}
+      <Pressable accessibilityRole="button" accessibilityLabel={props.open ? `Close ${task.title}` : `Open ${task.title}`} onPress={props.onToggle} style={{ gap: 2, flex: 1 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
           <View style={{ paddingHorizontal: 6, height: 18, borderRadius: 5, justifyContent: "center", backgroundColor: withAlpha(color, 0.16) }}>
             <Text style={{ fontSize: F.sm - 2, fontWeight: "700", color }}>{STATUS_LABEL[task.status].toUpperCase()}</Text>
@@ -282,6 +312,7 @@ function TaskRow(props: {
           </Text>
         ) : null}
       </Pressable>
+      </View>
       {props.open ? (
         <View style={{ gap: 7 }}>
           <TextInput value={title} onChangeText={setTitle} onBlur={() => { if (title.trim() && title.trim() !== task.title) props.onPatch({ title: title.trim() }); }} style={field} />

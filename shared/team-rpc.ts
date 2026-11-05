@@ -74,6 +74,8 @@ export const teamTaskSchema = z.object({
   doneAt: z.number().nullable().default(null),
   /** When the team agent last asked the assignee about it. */
   lastAskedAt: z.number().nullable().default(null),
+  /** Order within its person, top first; null until placed. */
+  order: z.number().nullable().default(null),
 });
 export type TeamTask = z.output<typeof teamTaskSchema>;
 
@@ -148,6 +150,13 @@ export const teamSaveTaskRpc = defineRpc({
     links: z.array(z.string().max(2000)).max(30).optional(),
   }),
   output: z.object({ task: teamTaskSchema }),
+});
+
+/** Moves tasks to a person (or unassigned, null) in this order: a drag within or across people. */
+export const teamReorderRpc = defineRpc({
+  name: "team.reorder",
+  input: z.object({ assigneeId: z.string().nullable(), ids: z.array(z.string()).max(1000) }),
+  output: z.object({ tasks: z.array(teamTaskSchema) }),
 });
 
 export const teamDeleteTaskRpc = defineRpc({

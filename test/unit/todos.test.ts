@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTodoStore } from "../../server/todos";
-import { agentPrompt, localDay, sortTodos } from "../../client/tasks/board/todo-model";
+import { agentPrompt, localDay, sortTodos, moveId } from "../../client/tasks/board/todo-model";
 
 describe("to-dos", () => {
   it("adds, edits, ticks, keeps done ones a week, and survives a restart", async () => {
@@ -26,9 +26,23 @@ describe("to-dos", () => {
   });
 
   it("sorts overdue and dated first, then undated, oldest first within each", () => {
-    const todo = (title: string, due: string | null, createdAt: number) => ({ id: title, title, notes: "", due, done: false, createdAt, doneAt: null, links: [], source: null, agentId: null });
+    const todo = (title: string, due: string | null, createdAt: number, order: number | null = null) => ({ id: title, title, notes: "", due, done: false, createdAt, doneAt: null, links: [], source: null, agentId: null, order });
     expect(sortTodos([todo("c", null, 1), todo("b", "2026-11-05", 2), todo("a", "2026-11-01", 3), todo("d", null, 0)]).map((t) => t.title)).toEqual(["a", "b", "d", "c"]);
+    // A placed order wins; unplaced ones follow by day.
+    expect(sortTodos([todo("a", "2026-11-01", 3), todo("x", null, 9, 1), todo("y", null, 8, 0)]).map((t) => t.title)).toEqual(["y", "x", "a"]);
+    expect(moveId(["a", "b", "c", "d"], "d", 1)).toEqual(["a", "d", "b", "c"]);
+    expect(moveId(["a", "b", "c"], "a", 9)).toEqual(["b", "c", "a"]);
     expect(localDay(1, new Date(2026, 11, 31))).toBe("2027-01-01");
+  });
+
+  it("puts new to-dos on top and keeps a dragged order", async () => {
+    const path = join(await mkdtemp(join(tmpdir(), "todos-")), "todos.json");
+    const store = createTodoStore(path, () => 1);
+    const first = await store.add({ title: "first" });
+    const second = await store.add({ title: "second" });
+    expect(sortTodos(await store.list()).map((todo) => todo.title)).toEqual(["second", "first"]);
+    await store.reorder([first.id, second.id]);
+    expect(sortTodos(await createTodoStore(path, () => 1).list()).map((todo) => todo.title)).toEqual(["first", "second"]);
   });
 
   it("keeps a Slack task's message, links and origin, and builds the agent's first message from them", async () => {
