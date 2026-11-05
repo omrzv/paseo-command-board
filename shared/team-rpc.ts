@@ -7,8 +7,45 @@ export const memberSchema = z.object({
   /** Their Slack user id, for DMs from the team agent; null until linked. */
   slackUserId: z.string().nullable().default(null),
   role: z.string().default(""),
+  /** A slot in MEMBER_COLORS, picked so no two members share one while there are slots left. */
+  colorIndex: z.number().int().min(0).nullable().default(null),
 });
 export type Member = z.output<typeof memberSchema>;
+
+/** Ten colours far apart on the wheel, a light and a dark variant each: [dark theme, light theme]. */
+export const MEMBER_COLORS: ReadonlyArray<readonly [string, string]> = [
+  ["#ff6b6b", "#d62828"], // red
+  ["#4dabf7", "#1864ab"], // blue
+  ["#51cf66", "#2b8a3e"], // green
+  ["#ffa94d", "#d9480f"], // orange
+  ["#cc5de8", "#862e9c"], // purple
+  ["#3bc9db", "#0b7285"], // teal
+  ["#f783ac", "#c2255c"], // pink
+  ["#ffd43b", "#b08800"], // yellow
+  ["#a9e34b", "#5c940d"], // lime
+  ["#c0a080", "#7f5539"], // brown
+];
+
+export function memberColor(member: Pick<Member, "colorIndex" | "id">, isDark: boolean): string {
+  const index = member.colorIndex ?? [...member.id].reduce((sum, character) => sum + character.charCodeAt(0), 0);
+  return MEMBER_COLORS[index % MEMBER_COLORS.length]![isDark ? 0 : 1];
+}
+
+/** Your manager: not assigned tasks, but things to raise with them. */
+export const managerSchema = z.object({
+  name: z.string(),
+  slackUserId: z.string().nullable().default(null),
+});
+export type Manager = z.output<typeof managerSchema>;
+
+export const agendaItemSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  done: z.boolean().default(false),
+  createdAt: z.number(),
+  doneAt: z.number().nullable().default(null),
+});
+export type AgendaItem = z.output<typeof agendaItemSchema>;
 
 export const TEAM_STATUSES = ["todo", "doing", "blocked", "done"] as const;
 export type TeamStatus = (typeof TEAM_STATUSES)[number];
@@ -56,13 +93,33 @@ export const teamFileSchema = z.object({
   members: z.array(memberSchema).default([]),
   tasks: z.array(teamTaskSchema).default([]),
   suggestions: z.array(suggestionSchema).default([]),
+  manager: managerSchema.nullable().default(null),
+  /** Things to raise with your manager. */
+  agenda: z.array(agendaItemSchema).default([]),
 });
 export type TeamFile = z.output<typeof teamFileSchema>;
 
 export const teamListRpc = defineRpc({
   name: "team.list",
   input: z.object({}),
-  output: z.object({ members: z.array(memberSchema), tasks: z.array(teamTaskSchema), suggestions: z.array(suggestionSchema) }),
+  output: z.object({ members: z.array(memberSchema), tasks: z.array(teamTaskSchema), suggestions: z.array(suggestionSchema), manager: managerSchema.nullable().default(null), agenda: z.array(agendaItemSchema).default([]) }),
+});
+
+/** Sets your manager, or clears it (null). */
+export const teamSetManagerRpc = defineRpc({
+  name: "team.set-manager",
+  input: z.object({ manager: z.object({ name: z.string().min(1).max(120), slackUserId: z.string().nullable() }).nullable() }),
+  output: z.object({ manager: managerSchema.nullable() }),
+});
+
+export const teamAgendaRpc = defineRpc({
+  name: "team.agenda",
+  input: z.discriminatedUnion("op", [
+    z.object({ op: z.literal("add"), text: z.string().min(1).max(1000) }),
+    z.object({ op: z.literal("toggle"), id: z.string() }),
+    z.object({ op: z.literal("delete"), id: z.string() }),
+  ]),
+  output: z.object({ agenda: z.array(agendaItemSchema) }),
 });
 
 export const teamSaveMemberRpc = defineRpc({

@@ -35,7 +35,7 @@ describe("Today strip", () => {
     expect(rows.get("a")).toEqual({ row: 0, rows: 2 });
     expect(rows.get("b")).toEqual({ row: 1, rows: 2 });
     expect(rows.get("c")).toEqual({ row: 0, rows: 1 });
-    const members = [{ id: "m1", name: "Dana Levi", slackUserId: null, role: "" }, { id: "m2", name: "Yossi", slackUserId: null, role: "" }];
+    const members = [{ id: "m1", name: "Dana Levi", slackUserId: null, role: "", colorIndex: 0 }, { id: "m2", name: "Yossi", slackUserId: null, role: "", colorIndex: 1 }];
     expect(memberIn(meeting("1:1", h(9), h(10), { attendees: [{ name: "", email: "dana.l@hero.ai", status: "accepted" }] }), members)?.id).toBe("m1");
     expect(memberIn(meeting("x", h(9), h(10), { attendees: [{ name: "Ron", email: "ron@hero.ai", status: "" }] }), members)).toBeNull();
   });

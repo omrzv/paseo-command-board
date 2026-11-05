@@ -8,10 +8,9 @@ import { openLink } from "../../components/open-link";
 import { TaskText as Text, HOST_FONT as F } from "../typography";
 import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { LinkedText } from "../cards/linked-text";
-import { hashColor } from "../cards/workspace-color";
 import { keysChanged } from "./keys-events";
 import { type CalendarStatus, type Meeting, calendarConnectRpc, calendarTodayRpc } from "../../../shared/calendar-rpc";
-import { type Member, type TeamTask, teamListRpc } from "../../../shared/team-rpc";
+import { type Member, type TeamTask, memberColor, teamListRpc } from "../../../shared/team-rpc";
 
 const POLL_MS = 2 * 60_000;
 const TICK_MS = 30_000;
@@ -132,7 +131,7 @@ export function TodayStrip(props: { theme: PluginTheme; visible: boolean }) {
   const focus = currentOrNext(meetings, now);
   const colorOf = (meeting: Meeting) => {
     const member = memberIn(meeting, team.members);
-    return member ? hashColor(member.id, tokens.isDark) : tokens.accent;
+    return member ? memberColor(member, tokens.isDark) : tokens.accent;
   };
 
   const next = focus ? (
@@ -243,8 +242,8 @@ function MeetingDetails(props: { meeting: Meeting; tokens: TaskTokens; team: { m
       </View>
       {meeting.location && meeting.location !== meeting.joinUrl ? <LinkedText text={meeting.location} linkColor={tokens.accentText} style={{ fontSize: F.sm, color: tokens.foregroundMuted }} /> : null}
       {member ? (
-        <View testID="today-member-tasks" style={{ gap: 4, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: withAlpha(hashColor(member.id, tokens.isDark), 0.6) }}>
-          <Text style={{ fontSize: F.sm, fontWeight: "700", color: hashColor(member.id, tokens.isDark) }}>{`${member.name}'s open tasks (${theirs.length})`}</Text>
+        <View testID="today-member-tasks" style={{ gap: 4, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: withAlpha(memberColor(member, tokens.isDark), 0.6) }}>
+          <Text style={{ fontSize: F.sm, fontWeight: "700", color: memberColor(member, tokens.isDark) }}>{`${member.name}'s open tasks (${theirs.length})`}</Text>
           {theirs.length === 0 ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>Nothing open.</Text> : null}
           {theirs.slice(0, 8).map((task) => (
             <Text key={task.id} numberOfLines={2} style={{ fontSize: F.sm, color: tokens.foreground }}>

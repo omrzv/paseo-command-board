@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   type Member, type TeamFile, type TeamTask, teamFileSchema,
-  teamAddUpdateRpc, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
+  teamAddUpdateRpc, teamAgendaRpc, teamSetManagerRpc, MEMBER_COLORS, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
 } from "../shared/team-rpc";
 import { pluginDataDir } from "./plugin-data";
 import { type SlackCall, slackApi, slackPath } from "./slack";
@@ -22,6 +22,13 @@ export function teamPath(): string {
  * The team's tasks, in one JSON file on the daemon. The team agent's `team`
  * command writes the same file, so it is read again whenever it changed.
  */
+/** The first colour slot no member has, else the next one round. */
+export function freeColor(members: Array<{ colorIndex: number | null }>): number {
+  const used = new Set(members.map((member) => member.colorIndex).filter((index): index is number => index !== null));
+  for (let index = 0; index < MEMBER_COLORS.length; index++) if (!used.has(index)) return index;
+  return members.length % MEMBER_COLORS.length;
+}
+
 export function createTeamStore(path = teamPath(), now: () => number = Date.now) {
   let data: TeamFile | null = null;
   let loadedMtime = -1;
@@ -38,6 +45,8 @@ export function createTeamStore(path = teamPath(), now: () => number = Date.now)
       data = teamFileSchema.parse({});
     }
     loadedMtime = mtime;
+    // Members from before colours were slots get the free ones, in order.
+    for (const member of data.members) if (member.colorIndex === null) member.colorIndex = freeColor(data.members);
     return data;
   };
 
@@ -71,20 +80,43 @@ export function createTeamStore(path = teamPath(), now: () => number = Date.now)
     async list() {
       const file = await load();
       const cutoff = now() - DONE_SHOWN_MS;
-      return { members: file.members, tasks: file.tasks.filter((task) => task.status !== "done" || (task.doneAt ?? 0) >= cutoff), suggestions: file.suggestions };
+      return {
+        members: file.members,
+        tasks: file.tasks.filter((task) => task.status !== "done" || (task.doneAt ?? 0) >= cutoff),
+        suggestions: file.suggestions,
+        manager: file.manager,
+        agenda: file.agenda.filter((item) => !item.done || (item.doneAt ?? 0) >= cutoff),
+      };
     },
     async saveMember(input: { id?: string; name: string; slackUserId?: string | null; role?: string }): Promise<Member> {
       const file = await load();
       let member = input.id ? file.members.find((entry) => entry.id === input.id) : undefined;
       if (input.id && !member) throw new Error("No such person");
       if (!member) {
-        member = { id: randomUUID(), name: input.name.trim(), slackUserId: input.slackUserId ?? null, role: input.role ?? "" };
+        member = { id: randomUUID(), name: input.name.trim(), slackUserId: input.slackUserId ?? null, role: input.role ?? "", colorIndex: freeColor(file.members) };
         file.members.push(member);
       } else {
         Object.assign(member, { name: input.name.trim(), ...(input.slackUserId !== undefined ? { slackUserId: input.slackUserId } : {}), ...(input.role !== undefined ? { role: input.role } : {}) });
       }
       await persist();
       return member;
+    },
+    async setManager(manager: { name: string; slackUserId: string | null } | null) {
+      const file = await load();
+      file.manager = manager ? { name: manager.name.trim(), slackUserId: manager.slackUserId } : null;
+      await persist();
+      return file.manager;
+    },
+    async agenda(change: { op: "add"; text: string } | { op: "toggle"; id: string } | { op: "delete"; id: string }) {
+      const file = await load();
+      if (change.op === "add") file.agenda.push({ id: randomUUID(), text: change.text.trim(), done: false, createdAt: now(), doneAt: null });
+      else if (change.op === "toggle") {
+        const item = file.agenda.find((entry) => entry.id === change.id);
+        if (item) { item.done = !item.done; item.doneAt = item.done ? now() : null; }
+      } else file.agenda = file.agenda.filter((entry) => entry.id !== change.id);
+      await persist();
+      const cutoff = now() - DONE_SHOWN_MS;
+      return file.agenda.filter((item) => !item.done || (item.doneAt ?? 0) >= cutoff);
     },
     async deleteMember(id: string) {
       const file = await load();
@@ -199,4 +231,6 @@ export function registerTeamServer(server: PluginServerContext, store = createTe
   server.handle(teamAddUpdateRpc, async ({ id, text }) => ({ task: await store.addUpdate(id, text) }));
   server.handle(teamSuggestionRpc, async ({ id, accept }) => ({ task: await store.suggestion(id, accept) }));
   server.handle(teamSlackPeopleRpc, ({ query }) => people(query));
+  server.handle(teamSetManagerRpc, async ({ manager }) => ({ manager: await store.setManager(manager) }));
+  server.handle(teamAgendaRpc, async (change) => ({ agenda: await store.agenda(change) }));
 }

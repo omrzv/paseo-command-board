@@ -3,7 +3,8 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createSlackPeople, createTeamStore } from "../../server/team";
+import { createSlackPeople, createTeamStore, freeColor } from "../../server/team";
+import { MEMBER_COLORS, memberColor } from "../../shared/team-rpc";
 
 const CLI = join(__dirname, "..", "..", "bin", "team.mjs");
 
@@ -55,6 +56,33 @@ describe("team", () => {
     const accepted = await store.suggestion(listed.suggestions[0]!.id, true);
     expect(accepted).toMatchObject({ title: "Prepare the poster", assigneeId: dana.id, links: ["https://x.slack.com/archives/C1/p1"] });
     expect((await store.list()).suggestions).toEqual([]);
+  });
+
+  it("gives every member a different colour slot, reusing a removed member's slot", async () => {
+    const { store } = await setup();
+    const people = [];
+    for (const name of ["A", "B", "C", "D"]) people.push(await store.saveMember({ name }));
+    expect(people.map((member) => member.colorIndex)).toEqual([0, 1, 2, 3]);
+    await store.deleteMember(people[1]!.id);
+    expect((await store.saveMember({ name: "E" })).colorIndex).toBe(1);
+    expect(new Set(MEMBER_COLORS.map(([dark]) => dark)).size).toBe(10);
+    expect(memberColor({ id: "x", colorIndex: 2 }, true)).toBe(MEMBER_COLORS[2]![0]);
+    expect(freeColor(Array.from({ length: 10 }, (_, index) => ({ colorIndex: index })))).toBe(0);
+  });
+
+  it("keeps the manager and the points to raise with them", async () => {
+    const { store } = await setup();
+    expect((await store.list()).manager).toBeNull();
+    await store.setManager({ name: "Uri Cohen", slackUserId: "U9" });
+    let agenda = await store.agenda({ op: "add", text: "Budget for Q1" });
+    agenda = await store.agenda({ op: "add", text: "Hiring" });
+    agenda = await store.agenda({ op: "toggle", id: agenda[0]!.id });
+    expect(agenda.map((item) => [item.text, item.done])).toEqual([["Budget for Q1", true], ["Hiring", false]]);
+    agenda = await store.agenda({ op: "delete", id: agenda[1]!.id });
+    const listed = await store.list();
+    expect(listed.manager).toEqual({ name: "Uri Cohen", slackUserId: "U9" });
+    expect(listed.agenda.map((item) => item.text)).toEqual(["Budget for Q1"]);
+    expect(listed.members).toEqual([]);
   });
 
   it("looks up Slack people with the board's token", async () => {

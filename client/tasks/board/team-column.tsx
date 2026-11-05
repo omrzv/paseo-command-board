@@ -10,9 +10,9 @@ import { taskTokens, type TaskTokens } from "../cards/tokens";
 import { LinkedText } from "../cards/linked-text";
 import { formatRelative } from "../cards/format";
 import { localDay } from "./todo-model";
-import { hashColor } from "../cards/workspace-color";
+import { ManagerCard } from "./manager-card";
 import {
-  type Member, type Suggestion, type TeamStatus, type TeamTask, TEAM_STATUSES,
+  type AgendaItem, type Manager, type Member, type Suggestion, type TeamStatus, type TeamTask, TEAM_STATUSES, memberColor,
   teamAddUpdateRpc, teamDeleteMemberRpc, teamDeleteTaskRpc, teamListRpc, teamSaveMemberRpc, teamSaveTaskRpc, teamSlackPeopleRpc, teamSuggestionRpc,
 } from "../../../shared/team-rpc";
 
@@ -74,6 +74,8 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
   const [members, setMembers] = useState<Member[] | null>(null);
   const [tasks, setTasks] = useState<TeamTask[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [manager, setManager] = useState<Manager | null>(null);
+  const [agenda, setAgenda] = useState<AgendaItem[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
@@ -86,6 +88,8 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
       setMembers(result.members);
       setTasks(result.tasks);
       setSuggestions(result.suggestions);
+      setManager(result.manager ?? null);
+      setAgenda(result.agenda ?? []);
     }, () => undefined);
   }, []);
   useEffect(() => {
@@ -134,9 +138,9 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
     return <View testID="team-column-folded" style={{ paddingLeft: 12, borderTopWidth: 1, borderTopColor: tokens.card.border }}>{header}</View>;
   }
 
-  const groups: Array<{ id: string | null; name: string; role: string; tasks: TeamTask[] }> = [
-    ...members.map((member) => ({ id: member.id, name: member.name, role: member.role, tasks: tasks.filter((task) => task.assigneeId === member.id) })),
-    { id: null, name: "Unassigned", role: "", tasks: tasks.filter((task) => task.assigneeId === null || !members.some((member) => member.id === task.assigneeId)) },
+  const groups: Array<{ id: string | null; name: string; role: string; color: string | null; tasks: TeamTask[] }> = [
+    ...members.map((member) => ({ id: member.id, name: member.name, role: member.role, color: memberColor(member, tokens.isDark), tasks: tasks.filter((task) => task.assigneeId === member.id) })),
+    { id: null, name: "Unassigned", role: "", color: null, tasks: tasks.filter((task) => task.assigneeId === null || !members.some((member) => member.id === task.assigneeId)) },
   ];
   const doneCount = tasks.length - openTasks.length;
 
@@ -145,6 +149,7 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
       {header}
       {error ? <Text style={{ fontSize: F.sm, color: tokens.danger, paddingRight: 8, paddingBottom: 4 }}>{error}</Text> : null}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 8, paddingRight: 8, paddingBottom: 16 }}>
+        <ManagerCard manager={manager} agenda={agenda} tokens={tokens} visible={props.visible} onChanged={refresh} />
         {managing ? (
           <MembersEditor members={members} tokens={tokens}
             search={(query) => rpc.current.people({ query })}
@@ -175,8 +180,8 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
           return (
             <View key={group.id ?? "none"} testID={`team-group-${group.id ?? "none"}`} style={{ gap: 4 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 2 }}>
-                {group.id ? <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: hashColor(group.id, tokens.isDark) }} /> : null}
-                <Text style={{ fontSize: F.base, fontWeight: "700", color: group.id ? hashColor(group.id, tokens.isDark) : tokens.foregroundMuted }}>{group.name}</Text>
+                {group.color ? <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: group.color }} /> : null}
+                <Text style={{ fontSize: F.base, fontWeight: "700", color: group.color ?? tokens.foregroundMuted }}>{group.name}</Text>
                 {group.role ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{group.role}</Text> : null}
                 <View style={{ flex: 1 }} />
                 <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{`${counts.open} open`}</Text>
@@ -185,7 +190,7 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
               </View>
               {shown.length === 0 ? <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>Nothing assigned.</Text> : null}
               {shown.map((task) => (
-                <TaskRow key={task.id} task={task} tokens={tokens} today={today} members={members} open={open === task.id} tint={group.id ? hashColor(group.id, tokens.isDark) : null}
+                <TaskRow key={task.id} task={task} tokens={tokens} today={today} members={members} open={open === task.id} tint={group.color}
                   onToggle={() => setOpen((current) => (current === task.id ? null : task.id))}
                   onPatch={(change) => patch(task.id, change)}
                   onUpdate={(text) => { void rpc.current.update({ id: task.id, text }).then((result) => upsert(result.task), fail); }}
@@ -281,7 +286,7 @@ function TaskRow(props: {
             {TEAM_STATUSES.map((status) => <Chip key={status} label={STATUS_LABEL[status]} on={task.status === status} color={statusColor(status, tokens)} tokens={tokens} testID={`team-status-${status}`} onPress={() => props.onPatch({ status })} />)}
           </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-            {props.members.map((member) => <Chip key={member.id} label={member.name} on={task.assigneeId === member.id} color={hashColor(member.id, tokens.isDark)} tokens={tokens} onPress={() => props.onPatch({ assigneeId: task.assigneeId === member.id ? null : member.id })} />)}
+            {props.members.map((member) => <Chip key={member.id} label={member.name} on={task.assigneeId === member.id} color={memberColor(member, tokens.isDark)} tokens={tokens} onPress={() => props.onPatch({ assigneeId: task.assigneeId === member.id ? null : member.id })} />)}
           </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
             {dueChoices(props.today).map((choice) => <Chip key={choice.label} label={choice.label} on={task.due === choice.value} tokens={tokens} onPress={() => props.onPatch({ due: choice.value })} />)}
@@ -330,7 +335,7 @@ function AddTask(props: { members: Member[]; tokens: TaskTokens; today: string; 
         style={[{ fontSize: F.sm, color: tokens.foreground, height: 32, paddingHorizontal: 8, borderRadius: 6, backgroundColor: withAlpha(tokens.foreground, 0.05) }, INPUT]} />
       {props.members.length > 0 ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-          {props.members.map((member) => <Chip key={member.id} label={member.name} on={assigneeId === member.id} color={hashColor(member.id, tokens.isDark)} tokens={tokens} testID={`team-add-assignee-${member.id}`} onPress={() => setAssigneeId((current) => (current === member.id ? null : member.id))} />)}
+          {props.members.map((member) => <Chip key={member.id} label={member.name} on={assigneeId === member.id} color={memberColor(member, tokens.isDark)} tokens={tokens} testID={`team-add-assignee-${member.id}`} onPress={() => setAssigneeId((current) => (current === member.id ? null : member.id))} />)}
         </View>
       ) : null}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
@@ -397,7 +402,7 @@ function MembersEditor(props: {
       <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.foreground }}>Team members</Text>
       {props.members.map((member) => (
         <View key={member.id} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: hashColor(member.id, tokens.isDark) }} />
+          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: memberColor(member, tokens.isDark) }} />
           <Icon name={member.slackUserId ? "Slack" : "User"} size={12} color={member.slackUserId ? "#7c3085" : tokens.foregroundMuted} />
           <Text style={{ flex: 1, fontSize: F.sm, color: tokens.foreground }}>{member.name}{member.role ? `  · ${member.role}` : ""}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${member.name}`} onPress={() => { if (removing === member.id) props.onDelete(member.id); else setRemoving(member.id); }} hitSlop={4}>
