@@ -277,7 +277,7 @@ function TodoRow(props: {
               <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted, textDecorationLine: "underline" }}>{`From ${todo.source.from} in ${todo.source.where}`}</Text>
             </Pressable>
           ) : null}
-          <View style={{ flexDirection: "row", gap: 6 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
             {todo.agentId && props.onOpenAgent ? (
               <Pressable accessibilityRole="button" onPress={() => props.onOpenAgent?.(todo.agentId!)} style={{ height: 28, paddingHorizontal: 10, borderRadius: 7, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: tokens.accent }}>
                 <Icon name="Bot" size={13} color={tokens.accentText} />

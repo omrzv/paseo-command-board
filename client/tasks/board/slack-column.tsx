@@ -194,7 +194,8 @@ function SlackCard(props: { item: SlackItem; tokens: TaskTokens; onState(item: S
           ))}
         </View>
       ) : null}
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+      {/* Wraps on a narrow column, so Done never falls off the edge. */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", columnGap: 6, rowGap: 5, marginTop: 2 }}>
         {item.replied && !closed ? <Text style={{ fontSize: F.sm, color: tokens.success }}>You replied</Text> : null}
         <View style={{ flex: 1 }} />
         <CardButton icon="MessageSquare" label="Open in Slack" tokens={tokens} onPress={() => openLink(item.permalink)} />
