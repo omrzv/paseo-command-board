@@ -19,6 +19,7 @@ vi.mock("../../client/tasks/board/details-sidebar", () => ({ DetailsSidebar: () 
 vi.mock("../../client/tasks/board/slack-column", () => ({ SlackColumn: () => null }));
 vi.mock("../../client/tasks/board/todo-column", () => ({ TodoColumn: () => null }));
 vi.mock("../../client/tasks/board/keys-column", () => ({ KeysColumn: () => null }));
+vi.mock("../../client/tasks/board/team-column", () => ({ TeamColumn: () => null }));
 vi.mock("../../client/tasks/cards/card-hints", () => ({ BoardTips: () => null, tipProps: () => ({}) }));
 
 import { Animated } from "react-native";

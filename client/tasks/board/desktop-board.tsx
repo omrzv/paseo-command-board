@@ -8,6 +8,7 @@ import { StatusIcon, taskTokens, type CardCallbacks } from "../cards";
 import { SlackColumn } from "./slack-column";
 import { TodoColumn } from "./todo-column";
 import { KeysColumn } from "./keys-column";
+import { TeamColumn } from "./team-column";
 import { LANE_ORDER, LANE_STATUS, isHistoryLane, type LaneId, type LaneModel, type TaskCard } from "../model";
 import { useReducedMotion } from "../../ui/use-reduced-motion";
 import { holdHostGestures } from "../../ui/hold-host-gestures";
@@ -189,6 +190,7 @@ export function DesktopBoard(props: {
   // Waiting fills only when an agent stops to ask (a permission, a plan, a question): folded while empty,
   // so My tasks takes its place, and opened again the moment an agent waits.
   const [todosShown, setTodosShown] = useState(false);
+  const [teamFolded, setTeamFolded] = useState(false);
   const waitingEmpty = todosShown && tasks.ready && !lanes.needs_input.loading && lanes.needs_input.cards.length === 0;
   const autoFolded = useRef(false);
   useEffect(() => {
@@ -280,6 +282,8 @@ export function DesktopBoard(props: {
   const archivedSwitch = useArchivedSwitch(laneOrder, lanes.archived, laneWidth, board.visible);
   // An outgoing lane still occupies its slot until the complete panel has slid out.
   const layout = boardLaneLayout(boardWidth, archivedSwitch.drawn, collapsedState, board.laneWidth, lanesWidth, laneSizing);
+  const slackWidth = Math.min(340, Math.max(260, layout.laneWidth));
+  const todoWidth = Math.min(320, Math.max(250, layout.laneWidth));
   // A floating panel covers the lanes' right side: the row scrolls far enough for the last lane to come out from under it.
   const coverRoom = floating && !inSheet ? panelWidth + (tabletFloating ? 0 : SIDEBAR.gap) : 0;
 
@@ -724,8 +728,16 @@ export function DesktopBoard(props: {
         </Modal.Content>
       </Modal>
       <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
-      <SlackColumn theme={theme} width={Math.min(340, Math.max(260, layout.laneWidth))} visible={board.visible} />
-      <TodoColumn theme={theme} width={Math.min(320, Math.max(250, layout.laneWidth))} visible={board.visible} onShown={setTodosShown} paseo={board.paseo} onOpenAgent={callbacks.onOpen} />
+      {/* You on top (Slack, My tasks), your team below; the team folds to a bar. */}
+      <View testID="board-people-block" style={{ minHeight: 0, flexDirection: "column", width: teamFolded ? undefined : slackWidth + todoWidth, borderRightWidth: teamFolded ? 0 : 1, borderRightColor: taskTokens(theme).card.border }}>
+        <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
+          <SlackColumn theme={theme} width={slackWidth} visible={board.visible} />
+          <TodoColumn theme={theme} width={todoWidth} visible={board.visible} onShown={setTodosShown} paseo={board.paseo} onOpenAgent={callbacks.onOpen} />
+        </View>
+        <View style={teamFolded ? undefined : { flex: 1, minHeight: 0 }}>
+          <TeamColumn theme={theme} visible={board.visible} folded={teamFolded} onFold={setTeamFolded} />
+        </View>
+      </View>
       <KeysColumn theme={theme} width={Math.min(300, Math.max(240, layout.laneWidth))} visible={board.visible} />
       <View
         testID="tasks-board-area"

@@ -81,9 +81,9 @@ export function slackPath(): string {
   return join(pluginDataDir(), "slack.json");
 }
 
-type SlackCall = (method: string, token: string, params: Record<string, string | number | boolean>) => Promise<Record<string, unknown>>;
+export type SlackCall = (method: string, token: string, params: Record<string, string | number | boolean>) => Promise<Record<string, unknown>>;
 
-const slackApi: SlackCall = async (method, token, params) => {
+export const slackApi: SlackCall = async (method, token, params) => {
   const body = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]));
   const response = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
