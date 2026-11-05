@@ -11,7 +11,8 @@ import { agentPrompt } from "./todo-model";
 
 const INPUT = { outlineStyle: "none" } as unknown as TextStyle;
 
-type Project = { key: string; name: string; rootPath: string; kind: "directory" | "git" | "non_git" };
+/** `key` tells projects apart in the list; `projectId` is what the daemon knows them by (the key is "host:server:path"). */
+type Project = { key: string; projectId: string | null; name: string; rootPath: string; kind: "directory" | "git" | "non_git" };
 type Model = { id: string; label: string; thinking: Array<{ id: string; label: string }>; defaultThinking: string | null; isDefault: boolean };
 type Provider = { id: string; label: string; models: Model[]; modes: Array<{ id: string; label: string }>; defaultMode: string | null };
 
@@ -55,6 +56,7 @@ export function StartAgentDialog(props: {
       if (!live) return;
       const found: Project[] = (projectList.projects ?? []).map((project) => ({
         key: project.projectKey ?? project.projectId,
+        projectId: project.projectId ?? null,
         name: project.projectCustomName || project.projectDisplayName,
         rootPath: project.projectRootPath,
         kind: project.projectKind,
@@ -108,8 +110,8 @@ export function StartAgentDialog(props: {
       const workspace = await props.paseo.workspaces.create({
         title,
         source: project.kind === "git" && worktree
-          ? { kind: "worktree", cwd: project.rootPath, projectId: project.key, action: "branch-off", worktreeSlug: worktreeSlug(title) }
-          : { kind: "directory", path: project.rootPath, projectId: project.key },
+          ? { kind: "worktree", cwd: project.rootPath, ...(project.projectId ? { projectId: project.projectId } : {}), action: "branch-off", worktreeSlug: worktreeSlug(title) }
+          : { kind: "directory", path: project.rootPath, ...(project.projectId ? { projectId: project.projectId } : {}) },
       });
       const agent = await workspace.agents.create({
         config: {
