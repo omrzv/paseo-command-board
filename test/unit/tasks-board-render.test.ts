@@ -1565,11 +1565,12 @@ describe("Tasks board, desktop", () => {
     if (selected) act(() => cards()[0]!.props.onSelect(cards()[0]!.props.card));
     const sidebar = () => hostsById("details-sidebar")[0]!;
     const layoutSidebar = (height: number) => sidebar().props.onLayout({ nativeEvent: { layout: { width: 380, height } } });
-    act(() => layoutSidebar(800));
+    // Within one layout band (above the compact column at 780 pt) resizing redraws nothing.
+    act(() => layoutSidebar(840));
     const content = sidebar().props.children;
     for (let delta = 1; delta <= 50; delta++) {
       act(() => hostsById("tasks-board-area")[0]!.props.onLayout({ nativeEvent: { layout: { width: 1300 + delta, height: 800 - delta } } }));
-      act(() => layoutSidebar(800 - delta));
+      act(() => layoutSidebar(840 - delta));
       expect(sidebar().props.children).toBe(content);
     }
     // Window resizing still changes lane widths and switches the short-column layout.

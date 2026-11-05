@@ -199,6 +199,8 @@ export interface TaskDetailCardsProps extends TimeSource {
   markRead?: DetailRead | null;
   /** Sends a message to the agent, as typing in its tab does; absent leaves the reply box out. */
   onReply?(text: string, images: ReplyImage[]): Promise<void>;
+  /** A short screen (a 14-inch laptop): the summary folds to two lines and the run's tiles step aside, so the last reply has room. */
+  shortScreen?: boolean;
   /** Answers the pending question (answers keyed by question text), or dismisses it (null); absent shows the questions read-only. */
   onAnswer?(answers: Record<string, string> | null): Promise<void>;
   /** The sections scroll under the fixed header (the sidebar); else the card grows with them (the sheet). */
@@ -368,7 +370,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
             {/* One child: the tab bar must stay at sticky index 1. */}
             <View>
               <DetailHeader {...props} actions={false} m={m} tokens={tokens} now={now} time={time} gutter={gutter} />
-              <InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
+              <InsightSummary card={card} tokens={tokens} m={m} language={props.language} shortScreen={props.shortScreen} />
             </View>
             {tabBar}
             {(["info", "messages"] as const).map((id) => (
@@ -391,7 +393,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
           </SheetScrollView>
         ) : (
           <>
-            <DetailHeader {...props} actions={false} m={m} tokens={tokens} now={now} time={time} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
+            <DetailHeader {...props} actions={false} m={m} tokens={tokens} now={now} time={time} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} shortScreen={props.shortScreen} />
             {tabBar}
             <View style={{ flex: 1, minHeight: 0, display: tab === "info" ? "flex" : "none" }}>
               <ScrollView key={`${card.id}-info`} style={{ flex: 1 }} {...detailScrollProps("inset")} scrollEventThrottle={16} onScroll={(event) => publishBody("info", scrollEdgePatch(event.nativeEvent))} onLayout={(event) => publishBody("info", { viewport: event.nativeEvent.layout.height })} onContentSizeChange={(_width, height) => publishBody("info", { content: height })} testID="detail-tab-info-scroll">
@@ -406,7 +408,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
             </View>
           </>
         )}
-        {props.onReply && !card.subagent && !card.archived ? <ReplyBox key={card.id} draftKey={card.id} docked onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
+        {props.onReply && !card.subagent && !card.archived ? <ReplyBox key={card.id} draftKey={card.id} shortScreen={props.shortScreen} docked onReply={props.onReply} tokens={tokens} language={props.language} running={turnRunning(card)} /> : null}
         {props.actions !== false ? <View style={{ paddingBottom: 10 }}><DetailActionBar {...props} sidebar contentUnder={underBar} /></View> : null}
       </View>
     );
@@ -417,7 +419,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
         {/* Plain views share the width (a ScrollView's own flex is not honoured on iOS); each scroll fills its half. */}
         <View style={{ flex: 1.2, minWidth: 0 }}>
           <ScrollView key={`${card.id}-head`} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 4 }} {...detailScrollProps("inset")} testID="detail-column-head">
-            <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} gutter={gutter} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
+            <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} gutter={gutter} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} shortScreen={props.shortScreen} />
             {leftSections.map((section) => sectionView(section, true))}
           </ScrollView>
         </View>
@@ -433,7 +435,7 @@ export function TaskDetailCards(given: TaskDetailCardsProps) {
   }
   return (
     <View testID={props.testID ?? "detail-cards"} style={[detailCardFrame(tokens), props.scrollBody ? { flexShrink: 1, minHeight: 0 } : null]}>
-      <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} />
+      <DetailHeader {...props} m={m} tokens={tokens} now={now} time={time} /><InsightSummary card={card} tokens={tokens} m={m} language={props.language} shortScreen={props.shortScreen} />
       {props.scrollBody ? (
         <ScrollView key={card.id} style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 4 }} {...detailScrollProps("inset")} testID="detail-body-scroll">
           {sections}
@@ -572,9 +574,11 @@ function InsightRefresh(props: { agentId: string; tokens: TaskTokens; language: 
 }
 
 /** The model's two sentences on the task, under the header: what it is, and where it stands. */
-function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics; language: TasksLanguage }) {
+function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics; language: TasksLanguage; shortScreen?: boolean }) {
   const insight = props.card.insight;
+  const [expanded, setExpanded] = useState(false);
   if (!insight?.summary) return null;
+  const folded = props.shortScreen === true && !expanded;
   const { tokens, m } = props;
   // The summary wears the workspace's colour, as the card's stripe does.
   const color = workspaceColor(props.card.location, tokens.isDark) ?? tokens.accent;
@@ -585,8 +589,13 @@ function InsightSummary(props: { card: TaskCard; tokens: TaskTokens; m: Metrics;
         <Text style={{ flex: 1, fontSize: F.sm, fontWeight: "600", color }}>{props.language === "zh" ? "摘要" : "Summary"}</Text>
 <InsightRefresh agentId={props.card.id} tokens={tokens} language={props.language} />
       </View>
-      <LinkedText selectable text={insight.summary} linkColor={tokens.accentText} style={{ fontSize: F.base, lineHeight: Math.round(F.base * 1.45), color: tokens.foreground }} />
-      {insight.agentTitle && insight.agentTitle !== props.card.title ? (
+      <LinkedText selectable text={insight.summary} linkColor={tokens.accentText} numberOfLines={folded ? 2 : undefined} style={{ fontSize: F.base, lineHeight: Math.round(F.base * 1.45), color: tokens.foreground }} />
+      {props.shortScreen ? (
+        <Pressable accessibilityRole="button" testID="detail-insight-more" onPress={() => setExpanded((was) => !was)} hitSlop={4} style={{ alignSelf: "flex-start", marginTop: 2 }}>
+          <Text style={{ fontSize: F.sm, color, fontWeight: "600" }}>{expanded ? (props.language === "zh" ? "收起" : "Less") : (props.language === "zh" ? "更多" : "More")}</Text>
+        </Pressable>
+      ) : null}
+      {!folded && insight.agentTitle && insight.agentTitle !== props.card.title ? (
         <Text numberOfLines={1} style={{ marginTop: 4, fontSize: F.sm, color: tokens.foregroundMuted }}>{insight.agentTitle}</Text>
       ) : null}
     </View>
@@ -618,7 +627,7 @@ function pastedImages(event: { clipboardData?: { items?: ArrayLike<{ kind: strin
  * sends, Shift+Enter breaks the line; on web, Ctrl/Cmd+V pastes images as in
  * the agent's own tab. `docked` is the sidebar's: pinned under the messages.
  */
-function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<void>; tokens: TaskTokens; language: TasksLanguage; running: boolean; docked?: boolean; /** The agent the draft is kept for. */ draftKey: string }) {
+function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<void>; tokens: TaskTokens; language: TasksLanguage; running: boolean; docked?: boolean; /** The agent the draft is kept for. */ draftKey: string; /** A short screen: one line until used. */ shortScreen?: boolean }) {
   const { tokens } = props;
   const zh = props.language === "zh";
   const toast = useToast();
@@ -675,13 +684,16 @@ function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<
   }, [text, images, sending, props.onReply, props.draftKey, drafts, toast, zh]);
   const empty = text.trim().length === 0 && images.length === 0;
   const tint = withAlpha(tokens.accent, tokens.isDark ? 0.12 : 0.06);
+  // On a short screen the box is one line until you click into it or it holds a draft.
+  const slim = props.shortScreen === true && !focused && empty;
+  const tallest = props.shortScreen ? 120 : 200;
   return (
-    <View testID="detail-reply" style={{ marginTop: props.docked ? 0 : 10, marginHorizontal: props.docked ? 10 : 6, marginBottom: props.docked ? 8 : 0, padding: 8, gap: 6, borderRadius: 12, borderWidth: focused ? 2 : 1.5, borderColor: focused ? tokens.accent : withAlpha(tokens.accent, 0.6), backgroundColor: tint }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+    <View testID="detail-reply" style={{ marginTop: props.docked ? 0 : 10, marginHorizontal: props.docked ? 10 : 6, marginBottom: props.docked ? (props.shortScreen ? 6 : 8) : 0, padding: props.shortScreen ? 6 : 8, gap: props.shortScreen ? 4 : 6, borderRadius: 12, borderWidth: focused ? 2 : 1.5, borderColor: focused ? tokens.accent : withAlpha(tokens.accent, 0.6), backgroundColor: tint }}>
+      {slim ? null : <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
         <Icon name="Reply" size={14} color={tokens.accentText} />
         <Text style={{ flex: 1, fontSize: F.sm, fontWeight: "700", color: tokens.accentText }}>{zh ? "回复 agent" : "Reply to the agent"}</Text>
         <Text style={{ fontSize: F.sm, color: tokens.foregroundMuted }}>{props.running ? (zh ? "加入当前轮次" : "joins the running turn") : Platform.OS === "web" ? (zh ? "Enter 发送 · 可粘贴图片" : "Enter sends · paste images") : ""}</Text>
-      </View>
+      </View>}
       {images.length > 0 ? (
         <View testID="detail-reply-images" style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {images.map((image, index) => (
@@ -715,7 +727,7 @@ function ReplyBox(props: { onReply(text: string, images: ReplyImage[]): Promise<
               send();
             }
           } : undefined}
-          style={{ flex: 1, minHeight: 44, height, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 8, backgroundColor: tokens.card.background, fontSize: F.base, color: tokens.foreground, outlineStyle: "none" } as unknown as TextStyle}
+          style={{ flex: 1, minHeight: slim ? 36 : 44, height: slim ? 36 : Math.min(height, tallest), paddingHorizontal: 10, paddingVertical: slim ? 8 : 10, borderRadius: 8, backgroundColor: tokens.card.background, fontSize: F.base, color: tokens.foreground, outlineStyle: "none" } as unknown as TextStyle}
         />
         <Pressable
           accessibilityRole="button"
@@ -995,7 +1007,7 @@ function DetailHeader(props: Inner) {
         {hero === "turn" ? <RunningTurn {...props} /> : null}
         {hero === "permission" ? <PermissionBlock {...props} /> : null}
         {hero === "error" ? <ErrorBlock {...props} /> : null}
-        {hero === "summary" ? <SummaryTiles tiles={summaryTiles(card, props.now, props.language)} tokens={tokens} touch={touch} /> : null}
+        {hero === "summary" && !props.shortScreen ? <SummaryTiles tiles={summaryTiles(card, props.now, props.language)} tokens={tokens} touch={touch} /> : null}
       </View>
     </View>
   );

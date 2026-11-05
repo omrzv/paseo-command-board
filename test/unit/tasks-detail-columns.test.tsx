@@ -170,6 +170,20 @@ describe("details columns", () => {
       delete (globalThis as Record<string, unknown>).__betterPaseoReplyDrafts;
     }
   });
+  it("reads compactly on a short screen: two-line summary with More, a one-line reply box", async () => {
+    const base = props(false);
+    const card = { ...base.card, insight: { agentTitle: base.card.title, summary: "A long summary. ".repeat(20), generatedAt: 1 } };
+    const draw = (shortScreen: boolean) => <TaskDetailCards {...base} card={card} columns={false} tabs scrollHeader shortScreen={shortScreen} onReply={() => Promise.resolve()} />;
+    await act(async () => { renderer = TestRenderer.create(draw(true)); });
+    const summaryText = () => host(renderer!.root, "detail-insight").find((node) => node.props.selectable === true && typeof node.props.text === "string");
+    expect(summaryText().props.numberOfLines).toBe(2);
+    await act(async () => host(renderer!.root, "detail-insight-more").props.onPress());
+    expect(summaryText().props.numberOfLines).toBeUndefined();
+    expect(StyleSheet.flatten(host(renderer!.root, "detail-reply-input").props.style).height).toBe(36);
+    await act(async () => { renderer!.update(draw(false)); });
+    expect(renderer!.root.findAll((node) => node.props.testID === "detail-insight-more")).toHaveLength(0);
+    expect(StyleSheet.flatten(host(renderer!.root, "detail-reply-input").props.style).height).toBe(44);
+  });
   it("uses larger detail tabs on desktop", async () => {
     await act(async () => {
       renderer = TestRenderer.create(<TaskDetailCards {...props(false)} touch={false} columns={false} tabs />);

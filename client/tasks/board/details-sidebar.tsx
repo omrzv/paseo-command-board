@@ -63,7 +63,9 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
   const { board, theme, selection, dispatch } = props;
   const tokens = taskTokens(theme);
   // Pixel-by-pixel resizes only change the browser's layout, not this subtree.
-  const [layout, setLayout] = useState({ short: false, wide: false });
+  const [layout, setLayout] = useState({ short: false, wide: false, compact: false });
+  // A 14-inch laptop's column: the task counts step aside and the details fold, so the last reply can be read.
+  const compact = layout.compact;
   const [menu, setMenu] = useState<{ id: string; point: { x: number; y: number } } | null>(null);
   const card = selection.id ? board.cardById(selection.id) : undefined;
   useParentTitle(board, card);
@@ -125,9 +127,9 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
   const content = (
     <>
       {menu && board.cardById(menu.id) ? <SidebarCardMenu board={board} card={board.cardById(menu.id)!} theme={theme} point={menu.point} onClose={() => setMenu(null)} /> : null}
-      {props.stats === false ? null : <StatsCard board={board} theme={theme} tokens={tokens} onLane={props.onLane} touch={props.touch} />}
+      {props.stats === false || compact ? null : <StatsCard board={board} theme={theme} tokens={tokens} onLane={props.onLane} touch={props.touch} />}
       {detailProps ? (
-        <TaskDetailCards key={tabs ? card?.id : undefined} {...detailProps} scrollBody={!short && !columns && !tabs} columns={columns} tabs={tabs} scrollHeader={tabs && (props.touch || layout.short || props.scrollAll === true)} />
+        <TaskDetailCards key={tabs ? card?.id : undefined} {...detailProps} shortScreen={compact} scrollBody={!short && !columns && !tabs} columns={columns} tabs={tabs} scrollHeader={tabs && (props.touch || layout.short || props.scrollAll === true)} />
       ) : (
         <GroupCard board={board} theme={theme} tokens={tokens} touch={props.touch} />
       )}
@@ -137,7 +139,8 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
     const height = Math.round(event.nativeEvent.layout.height);
     const short = height > 0 && height < SHORT_COLUMN;
     const wide = Math.round(event.nativeEvent.layout.width) >= SHEET_COLUMNS;
-    setLayout((was) => was.short === short && was.wide === wide ? was : { short, wide });
+    const compact = height > 0 && height < COMPACT_COLUMN;
+    setLayout((was) => was.short === short && was.wide === wide && was.compact === compact ? was : { short, wide, compact });
   };
   if (short) {
     return (
@@ -228,6 +231,8 @@ const SHEET_COLUMNS = 640;
 
 /** Under this height the sidebar scrolls as one instead of holding the details' header still. */
 const SHORT_COLUMN = 640;
+/** Columns shorter than this read the details compactly (a 14-inch laptop's window). */
+const COMPACT_COLUMN = 780;
 
 /** The board's lanes' counts after the filters, each with its lane's mark; a press shows the lane. */
 function StatsCard(props: { board: BoardController; theme: PluginTheme; tokens: TaskTokens; onLane(lane: LaneId): void; touch: boolean }) {
