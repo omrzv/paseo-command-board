@@ -12,6 +12,8 @@ import { formatRelative } from "../cards/format";
 import { localDay, moveId } from "./todo-model";
 import { DragHandle, useDragReorder, withDropLines, type DragReorder } from "./drag-reorder";
 import { onTeamChanged } from "./team-events";
+import { todosChanged } from "./todo-events";
+import { todosAddRpc } from "../../../shared/todos-rpc";
 import { ManagerCard } from "./manager-card";
 import {
   type AgendaItem, type Manager, type Member, type Suggestion, type TeamStatus, type TeamTask, TEAM_STATUSES, memberColor,
@@ -74,6 +76,9 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
   const deleteMemberNow = useRpc(teamDeleteMemberRpc);
   const peopleNow = useRpc(teamSlackPeopleRpc);
   const reorderNow = useRpc(teamReorderRpc);
+  const addTodoNow = useRpc(todosAddRpc);
+  const addTodo = useRef(addTodoNow);
+  addTodo.current = addTodoNow;
   const rpc = useRef({ list: listNow, saveTask: saveTaskNow, deleteTask: deleteTaskNow, update: updateNow, suggestion: suggestionNow, saveMember: saveMemberNow, deleteMember: deleteMemberNow, people: peopleNow, reorder: reorderNow });
   rpc.current = { list: listNow, saveTask: saveTaskNow, deleteTask: deleteTaskNow, update: updateNow, suggestion: suggestionNow, saveMember: saveMemberNow, deleteMember: deleteMemberNow, people: peopleNow, reorder: reorderNow };
 
@@ -219,7 +224,15 @@ export function TeamColumn(props: { theme: PluginTheme; visible: boolean; /** Th
                   onToggle={() => setOpen((current) => (current === task.id ? null : task.id))}
                   onPatch={(change) => patch(task.id, change)}
                   onUpdate={(text) => { void rpc.current.update({ id: task.id, text }).then((result) => upsert(result.task), fail); }}
-                  onDelete={() => { setTasks((current) => current.filter((entry) => entry.id !== task.id)); void rpc.current.deleteTask({ id: task.id }).catch(fail); }} />
+                  onDelete={() => { setTasks((current) => current.filter((entry) => entry.id !== task.id)); void rpc.current.deleteTask({ id: task.id }).catch(fail); }}
+                  onTakeBack={() => {
+                    // The task leaves the team and lands on top of My tasks, keeping its notes, links and day.
+                    void addTodo.current({ title: task.title, notes: task.notes, links: task.links.slice(0, 20), ...(task.due ? { due: task.due } : {}) }).then(() => {
+                      setTasks((current) => current.filter((entry) => entry.id !== task.id));
+                      void rpc.current.deleteTask({ id: task.id }).catch(fail);
+                      todosChanged();
+                    }, fail);
+                  }} />
             );
           }
         })}
@@ -281,6 +294,8 @@ function TaskRow(props: {
   onPatch(change: { title?: string; notes?: string; assigneeId?: string | null; status?: TeamStatus; due?: string | null; topic?: string }): void;
   onUpdate(text: string): void;
   onDelete(): void;
+  /** Back to your own list (My tasks). */
+  onTakeBack?(): void;
 }) {
   const { task, tokens } = props;
   const [notes, setNotes] = useState(task.notes);
@@ -320,6 +335,7 @@ function TaskRow(props: {
             {TEAM_STATUSES.map((status) => <Chip key={status} label={STATUS_LABEL[status]} on={task.status === status} color={statusColor(status, tokens)} tokens={tokens} testID={`team-status-${status}`} onPress={() => props.onPatch({ status })} />)}
           </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+            {props.onTakeBack ? <Chip label="Me" on={false} tokens={tokens} testID="team-take-back" onPress={props.onTakeBack} /> : null}
             {props.members.map((member) => <Chip key={member.id} label={member.name} on={task.assigneeId === member.id} color={memberColor(member, tokens.isDark)} tokens={tokens} onPress={() => props.onPatch({ assigneeId: task.assigneeId === member.id ? null : member.id })} />)}
           </View>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
