@@ -49,6 +49,9 @@ const en = {
     "Done. Paths in tool rows are now **relative to the workspace**, and copying one still gives the absolute path.\n\n- Fixed the missing `trim()` in `formatPath`\n- Added a test for a path outside the worktree\n\n| Check | Before | After |\n| --- | ---: | ---: |\n| Type check | 1 error | 0 |\n| Path tests | 30 / 31 | 31 / 31 |\n\n```ts\nformatPath(raw, { mode: \"relative\", roots })\n```\n\nThe options are listed under [Settings](https://github.com/RoundRedDot/better-paseo#settings).",
 
   sectionGeneral: "General",
+  chatEnabledTitle: "Enable Better Paseo chat",
+  chatEnabledDescription:
+    "Draws the chat with this plugin: tool calls, reasoning, checklists, notices, compaction rows, prompts and replies. Off leaves the whole chat to Paseo and other plugins. The Tasks board works either way.",
   languageTitle: "Language",
   languageDescription:
     "For this page, the toolbar tooltips and the Tasks board. Follow Paseo uses the language set in Paseo, or the device's when Paseo follows the system.",
@@ -137,8 +140,8 @@ const en = {
     "Show token usage and a Copy button. Supported pasted images are displayed; other attachments stay with Paseo.",
   markdownTitle: "Plugin markdown for replies",
   markdownDescription:
-    "Headings, lists and highlighted code blocks drawn by the plugin. It has no mermaid diagrams, images or Paseo's file-path links; turn it off when a reply needs them.",
-  markdownTips: [{ label: "Supported", text: "Headings, lists and highlighted code blocks drawn by the plugin." }, { label: "Limitations", text: "It has no mermaid diagrams, images or Paseo’s file-path links; turn it off when a reply needs them." }],
+    "Headings, lists and highlighted code blocks drawn by the plugin. Completed Mermaid blocks use Paseo's diagram renderer. Turn this off for host images or Paseo's file-path links.",
+  markdownTips: [{ label: "Supported", text: "Headings, lists and highlighted code blocks drawn by the plugin; completed Mermaid blocks use Paseo’s diagram renderer." }, { label: "Limitations", text: "Turn this off for host images or Paseo’s file-path links." }],
   markdownStyleTitle: "Markdown style",
   markdownStyleDescription:
     "Document is airy, for long answers. Compact is tighter, for short ones. Terminal sets the text in the code font.",
@@ -258,6 +261,8 @@ const zh: SettingsStrings = {
     "改好了。工具行里的路径现在**相对于工作区**显示，复制时仍然是绝对路径。\n\n- 补上了 `formatPath` 里漏掉的 `trim()`\n- 为 worktree 之外的路径补了测试\n\n| 检查 | 修改前 | 修改后 |\n| --- | ---: | ---: |\n| 类型检查 | 1 个错误 | 0 |\n| 路径测试 | 30 / 31 | 31 / 31 |\n\n```ts\nformatPath(raw, { mode: \"relative\", roots })\n```\n\n各项选项的说明见 [设置文档](https://github.com/RoundRedDot/better-paseo/blob/main/README-zh.md#设置)。",
 
   sectionGeneral: "通用",
+  chatEnabledTitle: "启用 Better Paseo 聊天",
+  chatEnabledDescription: "使用本插件绘制聊天：工具调用、思考、待办清单、提示、上下文压缩行、提问和回复。关闭后整个聊天交给 Paseo 和其他插件。无论开关状态如何，Tasks 看板都能正常工作。",
   languageTitle: "语言",
   languageDescription: "本页、工具栏提示和任务看板使用的语言。“跟随 Paseo”使用 Paseo 里设置的语言；Paseo 跟随系统时按设备语言判断。",
   languageTips: [{ label: "使用范围", text: "本页、工具栏提示和任务看板使用的语言。" }, { label: "跟随 Paseo", text: "使用 Paseo 里设置的语言；Paseo 跟随系统时按设备语言判断。" }],
@@ -337,8 +342,8 @@ const zh: SettingsStrings = {
   bubbleTitle: "增强提问气泡",
   bubbleDescription: "显示 token 用量和复制按钮；支持的粘贴图片一并显示，其他附件交给 Paseo。",
   markdownTitle: "回复使用插件 Markdown",
-  markdownDescription: "由插件绘制标题、列表和语法高亮代码块。不支持 mermaid 图表、图片和 Paseo 的文件路径链接，需要时请关闭。",
-  markdownTips: [{ label: "支持内容", text: "由插件绘制标题、列表和语法高亮代码块。" }, { label: "使用限制", text: "不支持 mermaid 图表、图片和 Paseo 的文件路径链接，需要时请关闭。" }],
+  markdownDescription: "由插件绘制标题、列表和语法高亮代码块；完整的 Mermaid 代码块由 Paseo 绘图。需要宿主图片或 Paseo 的文件路径链接时请关闭。",
+  markdownTips: [{ label: "支持内容", text: "由插件绘制标题、列表和语法高亮代码块；完整的 Mermaid 代码块由 Paseo 绘图。" }, { label: "使用限制", text: "需要宿主图片或 Paseo 的文件路径链接时请关闭。" }],
   markdownStyleTitle: "Markdown 样式",
   markdownStyleDescription: "“文档”排版舒展，适合长回答；“紧凑”间距更小，适合短回复；“终端”正文使用代码字体。",
   markdownDocument: "文档",

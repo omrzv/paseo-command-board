@@ -7,6 +7,7 @@ import { nativeProseText } from "./helpers/native-prose-text";
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
+import { StyleSheet } from "react-native";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -128,7 +129,7 @@ import { ChildMark } from "../../client/tasks/cards/child-mark";
 import { MARK_BITMAPS } from "../../server/mark-bitmaps";
 import { ContextRing, contextRingTone, formatSessionCost, formatTokenCount } from "../../client/tasks/cards/context-ring";
 import { pillTint } from "../../client/tasks/cards/tokens";
-import { TasksTypography, TasksTypographyScale } from "../../client/tasks/typography";
+import { TASK_MONO, TasksTypography, TasksTypographyScale } from "../../client/tasks/typography";
 import { MarkdownView } from "../../client/components/markdown/markdown-view";
 import { getEnhancerPreferences, updateEnhancerPreferences } from "../../client/preferences";
 import { variantMetrics } from "../../client/components/markdown/render/styles";
@@ -453,6 +454,58 @@ describe("unavailable task operations", () => {
     const props = { card, theme: LIGHT, language: "zh" as const, strings: BOARD_STRINGS.zh.sidebar, archive };
     const tree = await render(surface === "card" ? cardElement(card, { compact: true, onArchive: archive.press }) : surface === "details" ? React.createElement(TaskDetailCards, props) : React.createElement(DetailActionBar, props));
     expect(hostByTestId(tree.root, surface === "card" ? "task-card-archive" : surface === "details" ? "detail-archive" : "detail-bar-archive").props.disabled).toBe(true);
+  });
+
+  it.each([["light", LIGHT], ["dark", DARK]] as const)("floats the details' %s availability hint on hover and opens it flat, in the flow, on a press", async (_name, theme) => {
+    const card = { ...sample("sample-done"), availability: unavailableTask({ code: "directory_missing", detail: "/removed/worktree" }) };
+    const tokens = taskTokens(theme as never);
+    const chrome = menuChrome(theme);
+    const tree = await render(React.createElement(TaskDetailCards, { card, theme, now: NOW, language: "zh" as const, strings: BOARD_STRINGS.zh.sidebar }));
+    const tag = () => hostByTestId(tree.root, "task-availability-tag");
+    await act(async () => tag().props.onHoverIn());
+    expect(flat(hostByTestId(tree.root, "task-availability-hint").props.style)).toMatchObject({
+      position: "absolute",
+      top: "100%",
+      padding: 8,
+      backgroundColor: chrome.background,
+      borderColor: chrome.border,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 8,
+      boxShadow: chrome.shadow,
+    });
+    await act(async () => tag().props.onHoverOut());
+    expect(hints(tree)).toHaveLength(0);
+    // Pressed open it sits in the flow above the actions: flat, in the warning's border, no shadow.
+    await act(async () => tag().props.onPress({ stopPropagation() {} }));
+    expect(flat(hostByTestId(tree.root, "task-availability-hint").props.style)).toEqual({
+      marginTop: 4,
+      padding: 8,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: pillTint(tokens, tokens.warning).border,
+      backgroundColor: tokens.card.background,
+    });
+  });
+
+  it.each([["light", LIGHT], ["dark", DARK]] as const)("frames the corner's %s hint in the tip chrome on the warning fill, with its own padding", async (_name, theme) => {
+    const card = { ...sample("sample-child-1"), availability: unavailableTask({ code: "workspace_unavailable", detail: "/removed/worktree" }) };
+    const tokens = taskTokens(theme as never);
+    const chrome = menuChrome(theme);
+    const tree = await render(cardElement(card, { theme }));
+    await act(async () => hostByTestId(tree.root, "task-availability-corner-hit").props.onPress({ stopPropagation() {} }));
+    const hint = hostByTestId(tree.root, "task-availability-hint");
+    const panel = hint.findAll((node) => typeof node.type === "string" && node !== hint && flat(node.props.style).maxWidth !== undefined)[0]!;
+    expect(flat(panel.props.style)).toMatchObject({
+      paddingHorizontal: 10,
+      paddingTop: 8,
+      paddingBottom: 9,
+      gap: 4,
+      borderColor: chrome.border,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 8,
+      boxShadow: chrome.shadow,
+      backgroundColor: tokens.isDark ? "#422f10" : "#fff4ce",
+    });
   });
 });
 /** The running sample's start, 12m 30s before NOW, in the machine's time zone. */
@@ -783,6 +836,61 @@ describe("StatusIcon", () => {
     });
     expect(statusRingHolders()).toBe(0);
     motion.reduced = false;
+  });
+
+  it("turns the platform spinner on Android instead of the shared clock, and keeps the still quarter when not animating", async () => {
+    const platform = globalThis as { __rnMockOS?: string };
+    platform.__rnMockOS = "android";
+    try {
+      const tree = await render(
+        React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(StatusIcon, { key: "running", kind: "running", theme: LIGHT, animated: true }),
+          React.createElement(SpinnerRing, { key: "spinner", size: 13, color: "#d93636", testID: "button-spinner" }),
+          React.createElement(StatusIcon, { key: "still", kind: "running", size: 20, theme: LIGHT, animated: false, accessibilityLabel: "still" }),
+        ),
+      );
+      expect(motion.loops).toHaveLength(0);
+      expect(statusRingHolders()).toBe(0);
+      // Nothing turns on the shared value: the one quarter left is the still ring's, with no rotation.
+      const quarters = tree.root.findAll((node) => (node.type as unknown) === "Animated.View");
+      expect(quarters).toHaveLength(1);
+      expect(flat(quarters[0]!.props.style).transform).toBeUndefined();
+      const [running, still] = tree.root.findAll((node) => typeof node.type === "string" && node.props.testID === "status-running");
+      // Track, platform spinner over it, centre dot.
+      const isSpinner = (node: ReactTestInstance) => (node.type as unknown) === "ActivityIndicator";
+      const [track, , dot] = running!.children as ReactTestInstance[];
+      expect(running!.children).toHaveLength(3);
+      expect(flat(track!.props.style)).toMatchObject({ width: 12, opacity: 0.3 });
+      const [spinner] = running!.findAll(isSpinner);
+      expect(running!.findAll(isSpinner)).toHaveLength(1);
+      expect(spinner!.props).toMatchObject({ size: 15, color: "#268ae0" });
+      expect(flat(spinner!.props.style)).toMatchObject({ position: "absolute" });
+      expect(flat(dot!.props.style)).toMatchObject({ width: 6, borderRadius: 3 });
+      // The working button's spinner turns the same way, without the centre dot.
+      const button = hostByTestId(tree.root, "button-spinner");
+      expect(button.children).toHaveLength(2);
+      expect(button.findAll(isSpinner)).toHaveLength(1);
+      // Not animating: the host's quarter, still, and no spinner.
+      expect(still!.props.accessibilityLabel).toBe("still");
+      expect(still!.findAll((node) => (node.type as unknown) === "ActivityIndicator")).toHaveLength(0);
+      const arc = (still!.children as ReactTestInstance[])[1]!;
+      expect(flat(arc.props.style)).toMatchObject({ borderColor: "transparent", borderTopColor: "#268ae0" });
+      await act(async () => tree.unmount());
+      renderer = null;
+
+      motion.reduced = true;
+      const reduced = await render(React.createElement(StatusIcon, { kind: "running", theme: LIGHT }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(reduced.root.findAll((node) => (node.type as unknown) === "ActivityIndicator")).toHaveLength(0);
+      expect(statusRingHolders()).toBe(0);
+    } finally {
+      motion.reduced = false;
+      delete platform.__rnMockOS;
+    }
   });
 
   it("draws a working button's spinner as the running ring without its dot, on the same clock", async () => {
@@ -1131,6 +1239,29 @@ describe("TaskCardView rows", () => {
     const old = { ...orphan, parent: { id: "old", title: "多设备连接", missing: true, archived: false } };
     await act(async () => tree.update(cardElement(old, { onReveal, fields: fields("minimal") })));
     expect(texts(hostByTestId(tree.root, "task-card-meta"))).toEqual(["多设备连接"]);
+    // A parent link the plugin inferred says "Inferred" in every state of its parent, the archive
+    // icon only while the parent is archived; the card is no subtask, so its corner stays unmarked.
+    const subtaskMarks = () => tree.root.findAll((node) => typeof node.type === "string" && node.props.testID === "task-card-subtask-mark");
+    const tagIcons = () => icons(hostByTestId(tree.root, "task-card-meta-archived"));
+    const inferred = (parent: Partial<NonNullable<TaskCard["parent"]>>) => ({ ...orphan, parent: { id: "former", title: "多设备连接", missing: true, archived: true, ...parent, detached: true as const } });
+    const cases = [
+      { parent: { archivedAs: "agent" as const }, zh: ["多设备连接", "推断 · 已归档"], en: ["多设备连接", "Inferred · Archived"], icon: "Archive" },
+      { parent: { archived: false, archivedAs: "workspace" as const }, zh: ["多设备连接", "推断 · 工作区已归档"], en: ["多设备连接", "Inferred · Workspace archived"], icon: "Archive" },
+      // Restored: on the board, not archived.
+      { parent: { missing: false, archived: false }, zh: ["多设备连接", "推断"], en: ["多设备连接", "Inferred"], icon: "Info" },
+      // Unreadable: no title, archive unknown.
+      { parent: { title: null, archived: null }, zh: ["父任务", "推断"], en: ["Parent task", "Inferred"], icon: "Info" },
+    ];
+    for (const { parent, zh, en, icon } of cases) {
+      await act(async () => tree.update(cardElement(inferred(parent), { onReveal, fields: fields("minimal") })));
+      expect(texts(hostByTestId(tree.root, "task-card-meta"))).toEqual(zh);
+      expect(tagIcons()).toEqual([icon]);
+      expect(subtaskMarks()).toHaveLength(0);
+      await act(async () => tree.update(cardElement(inferred(parent), { onReveal, fields: fields("minimal"), language: "en" })));
+      expect(texts(hostByTestId(tree.root, "task-card-meta"))).toEqual(en);
+    }
+    await act(async () => hostByTestId(tree.root, "task-card-meta-parent").props.onPress());
+    expect(onReveal).toHaveBeenLastCalledWith("former");
   });
 
   it.each([
@@ -1175,6 +1306,17 @@ describe("TaskCardView rows", () => {
     const mark = tree.root.find((node) => (node.type as unknown) === "Icon" && node.props.name === "CircleX");
     expect(mark.props.color).toBe("#6b6b75");
     expect(icons(tree.root)).not.toContain("Square");
+  });
+
+  it.each([LIGHT, DARK])("draws API errors in danger red on a done card", async (theme) => {
+    const error = 'API error (attempt 1): request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerate..."';
+    const card = { ...sample("sample-done"), provider: "gemini", error };
+    const tree = await render(cardElement(card, { theme }));
+    const block = hostByTestId(tree.root, "task-card-reason");
+    const reason = block.find((node) => (node.type as unknown) === "Text" && node.props.children === error);
+    const mark = block.find((node) => (node.type as unknown) === "Icon" && node.props.name === "CircleX");
+    expect(flat(reason.props.style).color).toBe(buildTaskTokens(theme.colors).danger);
+    expect(mark.props.color).toBe(buildTaskTokens(theme.colors).danger);
   });
 
   it("draws a manual stop's reason muted, in the review and the done lane", async () => {
@@ -1229,7 +1371,7 @@ describe("TaskCardView rows", () => {
         expect(flat(byLabel(tree.root, set[0]!.label).props.style).backgroundColor).toBe("transparent");
         await act(async () => answer.props.onPressIn());
         expect(flat(byLabel(tree.root, set[0]!.label).props.style).backgroundColor).toBe("transparent");
-        expect(flat(byLabel(tree.root, set[0]!.label).props.style).boxShadow).toBe(tokens.card.buttonShadowHover);
+        expect(flat(byLabel(tree.root, set[0]!.label).props.style).boxShadow).toBe(tokens.isDark ? `inset 0 0 0 0.5px ${rest.borderColor}` : undefined);
         await act(async () => tree.unmount());
         renderer = null;
       }
@@ -1295,8 +1437,8 @@ describe("TaskCardView rows", () => {
     await act(async () => byLabel(tree.root, "拒绝").props.onPressIn({}));
     expect(flat(byLabel(tree.root, "允许").props.style).backgroundColor).toBe("transparent");
     expect(flat(byLabel(tree.root, "拒绝").props.style).backgroundColor).toBe("transparent");
-    expect(flat(byLabel(tree.root, "允许").props.style).boxShadow).toBe(tokens.card.buttonShadowHover);
-    expect(flat(byLabel(tree.root, "拒绝").props.style).boxShadow).toBe(tokens.card.buttonShadowHover);
+    expect(flat(byLabel(tree.root, "允许").props.style).boxShadow).toBeUndefined();
+    expect(flat(byLabel(tree.root, "拒绝").props.style).boxShadow).toBeUndefined();
     for (const theme of [LIGHT, DARK]) {
       const card = buildTaskTokens(theme.colors).card;
       expect(contrastRatio(card.primaryText, card.background)).toBeGreaterThanOrEqual(4.5);
@@ -1999,8 +2141,7 @@ describe("TaskCardView actions", () => {
     expect(flat(hostByTestId(phone.root, "task-card-stop").props.style)).toMatchObject({ alignSelf: "center" });
   });
 
-  it("keeps the pressed stop shadow until touch ends, with no fill", async () => {
-    const tokens = buildTaskTokens(LIGHT.colors);
+  it("keeps the stop control clear during a quick touch", async () => {
     const tree = await render(cardElement(sample("sample-running"), { onStop: () => {}, compact: true }));
     const stop = byLabel(tree.root, "停止");
     const options = byLabel(tree.root, "停止选项");
@@ -2011,8 +2152,9 @@ describe("TaskCardView actions", () => {
     await act(async () => { stop.props.onTouchStart(); stop.props.onPressIn(); stop.props.onPressOut(); });
     expect(flat(stop.props.style).backgroundColor).toBe("transparent");
     expect(flat(options.props.style).backgroundColor).toBe("transparent");
-    expect(outline()).toMatchObject({ borderRadius: 7, boxShadow: tokens.card.buttonShadowHover });
-    await act(async () => stop.props.onTouchEnd());
+    expect(outline().borderRadius).toBe(7);
+    expect(outline().boxShadow).toBeUndefined();
+    await act(async () => stop.props.onTouchCancel());
     expect(flat(stop.props.style).backgroundColor).toBe("transparent");
     expect(outline().boxShadow).toBeUndefined();
     await act(async () => tree.unmount());
@@ -2042,7 +2184,7 @@ describe("TaskCardView actions", () => {
       tree.root.find((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityState?.expanded === false).props.onPress(),
     );
     byLabel(tree.root, "Measure the sidebar ring 运行中").props.onPress();
-    expect(onReveal).toHaveBeenCalledWith("sample-child-1");
+    expect(onReveal).toHaveBeenCalledWith("sample-child-1", "sample-running");
     const list = hostByTestId(tree.root, "task-card-subtasks");
     // Each row: the agent's mark on the left, aligned with the title's first line, its status on the
     // corner in every state; no state words.
@@ -2091,7 +2233,7 @@ describe("TaskCardView actions", () => {
       expect(flat(hostByTestId(content, `subtask-meta-${child.id}`).props.style).marginRight).toBeUndefined();
       expect(content.findAll((node) => node === open)).toHaveLength(1);
       row.props.onPress();
-      expect(onReveal).toHaveBeenLastCalledWith(child.id);
+      expect(onReveal).toHaveBeenLastCalledWith(child.id, base.id);
     }
     if (compact) {
       byLabel(byLabel(list, `${base.children[0]!.title} ${cardStrings("zh").status[base.children[0]!.status]}`), cardStrings("zh").openInWorkspace).props.onPress();
@@ -2819,6 +2961,79 @@ describe("TaskDetailCards", () => {
     expect(tree.root.findAll((node) => (node.type as { name?: string }).name === "ProgressRing")[0]!.props).toMatchObject({ size: 44 });
   });
 
+  it("frames the sidebar chart tips in the card tip chrome", async () => {
+    for (const theme of [LIGHT, DARK]) {
+      const tokens = taskTokens(theme);
+      const chrome = menuChrome(theme);
+      const tree = await render(details(sample("sample-running"), { theme }));
+      await act(async () => hostByTestId(tree.root, "detail-context").props.onHoverIn());
+      const tip = hostByTestId(tree.root, "detail-context-tip");
+      expect(texts(tip)).toEqual(["上下文 · 86%", "172,000 / 200,000 tokens"]);
+      expect(flat(tip.props.style)).toMatchObject({
+        backgroundColor: chrome.background,
+        borderColor: chrome.border,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 8,
+        boxShadow: chrome.shadow,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+      });
+      const lines = tip.findAll((node) => (node.type as unknown) === "Text");
+      expect(flat(lines[0]!.props.style).color).toBe(tokens.foreground);
+      expect(flat(lines[1]!.props.style).color).toBe(tokens.foregroundMuted);
+      await act(async () => hostByTestId(tree.root, "detail-tokens-cached").props.onHoverIn());
+      expect(flat(hostByTestId(tree.root, "detail-tokens-tip").props.style)).toMatchObject({
+        backgroundColor: chrome.background,
+        borderRadius: 8,
+        boxShadow: chrome.shadow,
+      });
+      await act(async () => tree.unmount());
+      renderer = null;
+    }
+  });
+
+  it("frames the context bar's tip outside a running turn in the card tip chrome", async () => {
+    for (const theme of [LIGHT, DARK]) {
+      const tokens = taskTokens(theme);
+      const chrome = menuChrome(theme);
+      const tree = await render(details({ ...sample("sample-done"), context: { usedTokens: 41_000, maxTokens: 128_000 } }, { theme }));
+      // Outside a running turn the context is the usage's bar, not the turn's block.
+      expect(tree.root.findAll((node) => typeof node.type === "string" && node.props.testID === "detail-context")).toHaveLength(0);
+      await act(async () => hostByTestId(tree.root, "detail-context-bar").props.onHoverIn());
+      const tip = hostByTestId(tree.root, "detail-context-tip");
+      expect(texts(tip)).toEqual(["上下文 · 32%", "41,000 / 128,000 tokens"]);
+      expect(flat(tip.props.style)).toMatchObject({
+        position: "absolute",
+        bottom: "100%",
+        right: 0,
+        backgroundColor: chrome.background,
+        borderColor: chrome.border,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 8,
+        boxShadow: chrome.shadow,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+      });
+      const lines = tip.findAll((node) => (node.type as unknown) === "Text");
+      expect(flat(lines[0]!.props.style).color).toBe(tokens.foreground);
+      expect(flat(lines[1]!.props.style).color).toBe(tokens.foregroundMuted);
+      await act(async () => hostByTestId(tree.root, "detail-context-bar").props.onHoverOut());
+      expect(tree.root.findAll((node) => typeof node.type === "string" && node.props.testID === "detail-context-tip")).toHaveLength(0);
+      await act(async () => tree.unmount());
+      renderer = null;
+    }
+  });
+
+  it("uses monospace for turn figures without changing their labels", async () => {
+    const tree = await render(details(sample("sample-running"), { sessionTokens: { total: 15_322_587, cached: 14_943_278 } }));
+    const turn = hostByTestId(tree.root, "detail-turn");
+    const text = (value: string) => turn.findAll((node) => String(node.type) === "Text" && node.children.join("") === value)[0]!;
+    for (const value of ["12:30", "18m", "15.3M", "98%", "86%", "172k / 200k"]) {
+      expect(flat(text(value).props.style).fontFamily).toBe(TASK_MONO);
+    }
+    expect(flat(text("本轮计时").props.style).fontFamily).toBeUndefined();
+  });
+
   it("heads with the status, the title, the agent's chips and the actions, then the running turn", async () => {
     const onOpen = vi.fn();
     const tree = await render(details(sample("sample-running"), { onOpen, sessionTokens: { total: 15_322_587, cached: 14_943_278 } }));
@@ -2857,6 +3072,18 @@ describe("TaskDetailCards", () => {
     await act(async () => byLabel(asking.root, "收起用量").props.onPress());
     expect(byLabel(asking.root, "展开用量").props.accessibilityState).toEqual({ expanded: false });
     await act(async () => byLabel(asking.root, "展开用量").props.onPress());
+  });
+
+  it.each([["属性", "detail-location"], ["子任务", "detail-subtasks"], ["用量", "detail-usage"], ["活动", "detail-activity"]])("toggles the %s panel and disables it while closed", async (title, id) => {
+    const tree = await render(details(sample("sample-running")));
+    const panel = () => hostByTestId(tree.root, `${id}-panel`);
+    const heading = () => byLabel(tree.root, `收起${title}`);
+    if (panel().props.pointerEvents === "none") await act(async () => byLabel(tree.root, `展开${title}`).props.onPress());
+    await act(async () => heading().props.onPress());
+    expect(panel().props.pointerEvents).toBe("none");
+    expect(byLabel(tree.root, `展开${title}`).props.accessibilityState).toEqual({ expanded: false });
+    await act(async () => byLabel(tree.root, `展开${title}`).props.onPress());
+    expect(panel().props.pointerEvents).toBe("auto");
   });
 
   it("lists the place, then copyable branch and directory, an openable PR, each state in a note line", async () => {
@@ -2946,6 +3173,24 @@ describe("TaskDetailCards", () => {
     expect(tree.root.findAll((node) => node.props.testID === "detail-parent-unarchive")).toHaveLength(0);
     await act(async () => hostByTestId(tree.root, "detail-parent").props.onPress());
     expect(onJump).toHaveBeenCalledWith("gone");
+
+    // A parent link the plugin inferred says "Inferred" in every state of its parent, and says so to a
+    // screen reader. Restored, it still jumps; off the board it keeps its "Not on the board" note.
+    const inferred = (parent: Partial<NonNullable<TaskCard["parent"]>>) => ({ ...orphan, parent: { id: "gone", title: "多设备连接", missing: true, archived: true, ...parent, detached: true as const } });
+    await act(async () => tree.update(details(inferred({}), { onJump, unarchive })));
+    expect(texts(hostByTestId(tree.root, "detail-parent"))).toEqual(["多设备连接", "推断 · 已归档", "取消归档"]);
+    expect(icons(hostByTestId(tree.root, "detail-parent-tag"))).toEqual(["Archive"]);
+    expect(hostByTestId(tree.root, "detail-parent").props.accessibilityLabel).toBe("父任务: 多设备连接, 推断 · 已归档");
+    await act(async () => tree.update(details(inferred({ missing: false, archived: false }), { onJump, unarchive })));
+    expect(texts(hostByTestId(tree.root, "detail-parent"))).toEqual(["多设备连接", "推断"]);
+    expect(icons(hostByTestId(tree.root, "detail-parent-tag"))).toEqual(["Info"]);
+    await act(async () => hostByTestId(tree.root, "detail-parent").props.onPress());
+    expect(onJump).toHaveBeenLastCalledWith("gone");
+    await act(async () => tree.update(details(inferred({ archived: false }), { onJump, onOpen: vi.fn(), unarchive })));
+    expect(texts(hostByTestId(tree.root, "detail-parent"))).toEqual(["多设备连接", "推断", "不在看板上"]);
+    await act(async () => tree.update(details(inferred({ title: null, archived: null }), { onJump, unarchive }, "en")));
+    expect(texts(hostByTestId(tree.root, "detail-parent"))).toEqual(["Parent task", "Inferred"]);
+    expect(hostByTestId(tree.root, "detail-parent").props.accessibilityLabel).toBe("Parent: Parent task, Inferred");
   });
 
   it("offers Archive beside Open in a done task's header", async () => {
@@ -3048,8 +3293,22 @@ describe("TaskDetailCards", () => {
     expect(texts(hostByTestId(usage, "detail-tokens"))).toEqual(["Token 构成", "196k", "缓存输入", "120k", "新输入", "62k", "输出", "14k"]);
     expect(texts(hostByTestId(usage, "detail-usage-cost"))).toEqual(["累计费用", "$1.84"]);
     expect(texts(hostByTestId(usage, "detail-usage-turn"))).toEqual(["上一轮耗时", "18m"]);
+    for (const value of ["196k", "120k", "62k", "14k", "$1.84", "18m"]) {
+      const node = usage.findAll((node) => String(node.type) === "Text" && node.props.children === value)[0]!;
+      expect(flat(node.props.style).fontFamily).toBe(TASK_MONO);
+    }
     // A segment grows with its count.
     expect(flat(hostByTestId(usage, "detail-tokens-cached").props.style).flexGrow).toBe(120_000);
+  });
+
+  it("uses monospace for the context figures outside a running turn", async () => {
+    const tree = await render(details({ ...sample("sample-done"), context: { usedTokens: 41_000, maxTokens: 128_000 } }));
+    const context = hostByTestId(tree.root, "detail-context-bar");
+    const figures = context.findAll((node) => String(node.type) === "Text" && typeof node.props.children === "string" && /\d/.test(node.props.children));
+    expect(figures).toHaveLength(2);
+    for (const node of figures) {
+      expect(flat(node.props.style).fontFamily).toBe(TASK_MONO);
+    }
   });
 
   it("draws the activity as a timeline, the live span in the status colour", async () => {
@@ -3129,7 +3388,7 @@ describe("TaskDetailCards", () => {
       expect(node.props.onPress).toBeUndefined();
       expect(node.props.accessibilityRole).toBeUndefined();
       expect(flat(node.props.style)).toMatchObject({ flexDirection: "row", alignItems: "baseline", gap: 6, flexShrink: 0 });
-      expect(flat(number!.props.style)).toMatchObject({ fontSize: 16, lineHeight: 22, fontWeight: "600", color: tokens.foreground, fontVariant: ["tabular-nums"] });
+      expect(flat(number!.props.style)).toMatchObject({ fontSize: 16, lineHeight: 22, fontWeight: "600", color: tokens.foreground, fontFamily: TASK_MONO });
       expect(number!.props.children).toBe(expected.value);
       expect(number!.props.numberOfLines).toBeUndefined();
       expect(flat(caption!.props.style)).toMatchObject({ fontSize: 12, lineHeight: 16, color: tokens.foregroundMuted });
@@ -3142,6 +3401,10 @@ describe("TaskDetailCards", () => {
     await measure(536);
     const wide = hostByTestId(tree.root, "detail-summary");
     expect(texts(wide)).toEqual(["18m", "Last turn · Ended 2m ago", "$1.84", "Cost · Total", "316k", "Token · 38% cached"]);
+    for (const value of ["2m", "38%"]) {
+      const node = wide.findAll((node) => String(node.type) === "Text" && node.props.children === value)[0]!;
+      expect(flat(node.props.style).fontFamily).toBe(TASK_MONO);
+    }
     expect(flat(wide.props.style).justifyContent).toBe("space-between");
     // The strip's flex children are the three clusters and nothing else.
     expect(wide.children.filter((child): child is ReactTestInstance => typeof child !== "string").map((child) => child.props.testID)).toEqual([
@@ -3339,8 +3602,9 @@ describe("TaskDetailCards", () => {
     expect(texts(hostByTestId(tree.root, "detail-subtasks-more"))).toEqual(["显示全部 14 个", "其余 4 个已完成"]);
     await act(async () => byLabel(tree.root, "显示全部 14 个 其余 4 个已完成").props.onPress());
     expect(titles(tree)).toHaveLength(14);
+    expect(hostByTestId(tree.root, "detail-subtasks-extra-panel").props.pointerEvents).toBe("auto");
     await act(async () => byLabel(tree.root, "收起").props.onPress());
-    expect(titles(tree)).toHaveLength(10);
+    expect(hostByTestId(tree.root, "detail-subtasks-extra-panel").props.pointerEvents).toBe("none");
     await act(async () => byLabel(tree.root, "显示全部 14 个 其余 4 个已完成").props.onPress());
     await act(async () => tree.update(details(many("many-b"))));
     expect(titles(tree)).toHaveLength(10);
@@ -3456,9 +3720,10 @@ describe("TaskDetailCards", () => {
         expect(heading().props.accessibilityState.expanded).toBe(true);
         await act(async () => heading().props.onPress());
         expect(heading().props.accessibilityState.expanded).toBe(false);
-        expect(tree.root.findAll((node) => node.props.testID === `${id}-text`)).toHaveLength(0);
+        expect(hostByTestId(tree.root, `${id}-panel`).props.pointerEvents).toBe("none");
         await act(async () => heading().props.onPress());
         expect(heading().props.accessibilityState.expanded).toBe(true);
+        expect(hostByTestId(tree.root, `${id}-panel`).props.pointerEvents).toBe("auto");
         expect(hostByTestId(tree.root, `${id}-text`)).toBeDefined();
       }
     } finally {
@@ -3965,7 +4230,7 @@ describe("TaskDetailCards", () => {
       expect(flat(hostByTestId(tree.root, id).props.style).boxShadow).toBeUndefined();
       await act(async () => chip.props.onPressIn());
       expect(flat(hostByTestId(tree.root, id).props.style).backgroundColor).toBe(background);
-      expect(flat(hostByTestId(tree.root, id).props.style).boxShadow).toBe(tokens.card.buttonShadowHover);
+      expect(flat(hostByTestId(tree.root, id).props.style).boxShadow).toBeUndefined();
       await act(async () => chip.props.onPressOut());
       await act(async () => chip.props.onHoverOut());
       expect(flat(hostByTestId(tree.root, id).props.style).backgroundColor).toBe(background);
@@ -4057,7 +4322,7 @@ describe("overlays in the board's menu chrome", () => {
     for (const theme of [LIGHT, DARK]) {
       const tree = await render(cardElement(sample("sample-running"), { theme }));
       await act(async () => hostByTestId(tree.root, "task-card-context").props.onHoverIn());
-      expect(flat(hostByTestId(tree.root, "task-card-context-details").props.style)).toMatchObject({ position: "absolute", ...chromeOf(theme) });
+      expect(flat(hostByTestId(tree.root, "task-card-context-details").props.style)).toMatchObject({ position: "absolute", ...chromeOf(theme), borderRadius: 8, paddingHorizontal: 8 });
       await act(async () => tree.unmount());
       renderer = null;
     }
@@ -4068,7 +4333,7 @@ describe("overlays in the board's menu chrome", () => {
 });
 
 describe("TaskCardView chrome", () => {
-  it.each([false, true])("is Linear's card: radius 8 and a hairline; hover keeps the fill, press deepens the shadow (compact=%s)", async (compact) => {
+  it.each([false, true])("keeps the card fill and raises its shadow on pointer press (compact=%s)", async (compact) => {
     const tokens = buildTaskTokens(LIGHT.colors);
     const tree = await render(cardElement(sample("sample-done"), { compact }));
     const surface = () => flat(hostByTestId(tree.root, "task-card-sample-done").props.style);
@@ -4081,14 +4346,17 @@ describe("TaskCardView chrome", () => {
     expect(hovered.borderColor).toBe(rest.borderColor);
     expect(hovered.boxShadow).toBe(tokens.card.shadow);
     expect(hovered.zIndex).toBe(2);
+    vi.useFakeTimers();
     await act(async () => hostByTestId(tree.root, "task-card-sample-done").props.onPressIn());
+    await act(async () => { vi.advanceTimersByTime(100); });
     const pressed = surface();
-    expect(pressed.backgroundColor).toBe(compact ? tokens.card.hoverBackground : tokens.card.background);
+    expect(pressed.backgroundColor).toBe(tokens.card.background);
     expect(pressed.boxShadow).toBe(tokens.card.shadowHover);
     expect(pressed.transform).toBeUndefined();
-    expect({ ...pressed, backgroundColor: 0, boxShadow: 0, zIndex: 0, transform: 0 }).toEqual({ ...rest, backgroundColor: 0, boxShadow: 0, zIndex: 0, transform: 0 });
+    expect({ ...pressed, backgroundColor: 0, borderColor: 0, boxShadow: 0, zIndex: 0, transform: 0 }).toEqual({ ...rest, backgroundColor: 0, borderColor: 0, boxShadow: 0, zIndex: 0, transform: 0 });
     await act(async () => hostByTestId(tree.root, "task-card-sample-done").props.onPressOut());
     expect(surface().backgroundColor).toBe(tokens.card.background);
+    vi.useRealTimers();
   });
 
   it.each([
@@ -4170,10 +4438,13 @@ describe("TaskCardView chrome", () => {
     const failed = { ...sample("sample-done"), lane: "review" as const, status: "failed" as const, error: "HTTP 503" };
     const tree = await render(cardElement(failed, { compact: true }));
     const card = () => hostByTestId(tree.root, "task-card-sample-done");
+    vi.useFakeTimers();
     await act(async () => card().props.onPressIn());
+    await act(async () => { vi.advanceTimersByTime(100); });
     expect(flat(card().props.style).backgroundColor).toBe(tokens.card.failedHover);
     await act(async () => card().props.onPressOut());
     expect(flat(card().props.style).backgroundColor).toBe(tokens.card.failed);
+    vi.useRealTimers();
   });
 
   it("draws a failed card's reason and subtask rules at 0.5 pt, selected or not", async () => {
@@ -4326,9 +4597,15 @@ describe("formatters", () => {
     expect(formatRelative(2 * 86_400_000, "zh")).toBe("2 天前");
     expect(formatTokens(950)).toBe("950");
     expect(formatTokens(182_000)).toBe("182k");
+    expect(formatTokens(1_000_000)).toBe("1M");
+    expect(formatTokens(2_000_000)).toBe("2M");
+    expect(formatTokens(1_100_000)).toBe("1.1M");
+    expect(formatTokens(1_200_000)).toBe("1.2M");
+    expect(formatTokens(1_010_000)).toBe("1.01M");
     expect(formatTokens(1_250_000)).toBe("1.25M");
-    // Three figures at most, rounding up to the next unit.
-    expect([950, 12_345, 812_000, 999_600, 15_322_587, 354_800_101, 1_234_000_000].map(formatTokenTotal)).toEqual(["950", "12.3k", "812k", "1.00M", "15.3M", "355M", "1.23B"]);
+    // Three figures at most, rounding up to the next unit. A trailing decimal zero is omitted.
+    expect([950, 12_345, 812_000, 999_600, 15_322_587, 354_800_101, 1_234_000_000].map(formatTokenTotal)).toEqual(["950", "12.3k", "812k", "1M", "15.3M", "355M", "1.23B"]);
+    expect([12_000, 32_000_000, 32_500_000, 10_000_000].map(formatTokenTotal)).toEqual(["12k", "32M", "32.5M", "10M"]);
   });
 
   it("shows the home directory as ~", () => {

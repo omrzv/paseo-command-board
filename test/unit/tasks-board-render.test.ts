@@ -22,7 +22,7 @@ vi.mock("@getpaseo/plugin/client/react-native", async () => {
     const empty = props.ListEmptyComponent as React.ReactNode;
     return React.createElement(
       "FlatList",
-      { ref: props.ref, testID: props.testID, refreshing: props.refreshing, onRefresh: props.onRefresh, alwaysBounceVertical: props.alwaysBounceVertical, onContentSizeChange: props.onContentSizeChange, onScroll: props.onScroll, contentContainerStyle: props.contentContainerStyle, onScrollToIndexFailed: props.onScrollToIndexFailed, onEndReached: props.onEndReached, data: props.data },
+      { ref: props.ref, testID: props.testID, refreshing: props.refreshing, onRefresh: props.onRefresh, alwaysBounceVertical: props.alwaysBounceVertical, onContentSizeChange: props.onContentSizeChange, onScroll: props.onScroll, contentContainerStyle: props.contentContainerStyle, onScrollToIndexFailed: props.onScrollToIndexFailed, onEndReached: props.onEndReached, data: props.data, viewabilityConfigCallbackPairs: props.viewabilityConfigCallbackPairs },
       data.length
         ? data.map((item, index) => {
             host.rowRenders += 1;
@@ -51,7 +51,7 @@ const host = vi.hoisted(() => ({
   settings: null as Record<string, unknown> | null,
   /** The automatic title settings; loading while null. */
   titleSettings: null as Record<string, unknown> | null,
-  counts: null as { running: number; needsInput: number; review: number; done: number } | null,
+  counts: null as { running: number; needsInput: number; review: number; done: number; hidden?: import("../../client/tasks/model").TaskCard[] } | null,
   /** The filters the sidebar row last counted with. */
   countScope: null as unknown,
   canStop: false,
@@ -138,6 +138,7 @@ import { DesktopFilterBar as DesktopFilterBarMemo, DesktopToolbar as DesktopTool
 import { LaneWidthMark } from "../../client/tasks/board/lane-width-mark";
 import { BOARD_STRINGS } from "../../client/tasks/board/strings";
 import { NOTICE_MS } from "../../client/tasks/board/use-board";
+import { ANNOUNCE_AFTER_MS, FLASH_AFTER_ENTER_MS, FLASH_AFTER_SCROLL_MS, newCardStore, resetNewCards } from "../../client/tasks/board/new-cards";
 import { readSidebarPreference, resetSidebarPreference, writeSidebarPreference } from "../../client/tasks/board/sidebar-model";
 import { ACTIVE_LANE_ORDER as LANE_ORDER, type TaskCard } from "../../client/tasks/model";
 import { BrandMark, DetailActionBar, PiMark, TagMark, TaskCardView, TaskDetailCards, taskTokens } from "../../client/tasks/cards";
@@ -218,7 +219,9 @@ function layOut(width: number) {
     act(() => {
       for (const view of views) {
         laidOut.add(view.props.onLayout);
-        view.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 800 } } });
+        const measured = view.props.testID === "desktop-toolbar-end"
+          ? measureHostTree(hostsById("desktop-toolbar")[0]!, { width }).get(view)!.width : width;
+        view.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: measured, height: 800 } } });
       }
     });
   }
@@ -350,6 +353,7 @@ beforeEach(() => {
   host.rowRenders = 0;
   host.liveTasks = null;
   resetBoardSessions();
+  resetNewCards();
   resetSidebarPreference();
   vi.useFakeTimers();
 });
@@ -401,15 +405,307 @@ describe("search coverage render isolation", () => {
 });
 
 describe("Tasks search coverage and centred toolbar", () => {
-  it("matches the search group to the measured filter controls", () => {
+  beforeEach(() => {
+    const Value = Animated.Value;
+    vi.spyOn(Animated, "Value").mockImplementation(function (initial) {
+      const value = new Value(initial);
+      const interpolate = value.interpolate.bind(value);
+      value.interpolate = ((config) => {
+        if (config.inputRange.length !== 2 || !config.outputRange.every((entry) => typeof entry === "number")) return interpolate(config);
+        const progress = (Number(liveNumber(value)) - config.inputRange[0]!) / (config.inputRange[1]! - config.inputRange[0]!);
+        return Number(config.outputRange[0]) + progress * (Number(config.outputRange[1]) - Number(config.outputRange[0]));
+      }) as typeof value.interpolate;
+      return value;
+    });
+    vi.spyOn(Animated, "timing").mockImplementation((value, config) => ({
+      start: (done) => { (value as Animated.Value).setValue(config.toValue as number); done?.({ finished: true }); },
+      stop() {}, reset() {},
+    }));
+  });
+  afterEach(() => {
+    vi.mocked(Animated.timing).mockRestore();
+    vi.mocked(Animated.Value).mockRestore();
+  });
+
+  it.each([600, 800, 959].flatMap((width) => ([14, 21] as const).filter((base) => width > 600 || base === 14).flatMap((base) => (["en", "zh"] as const).map((language) => ({ width, base, language })))))
+  ("keeps $language search inline at $width/UI$base without a repeated search icon", ({ width, base, language }) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
+    updateEnhancerPreferences({ language });
+    act(() => { renderer = TestRenderer.create(screen(false, {}, { ...(theme as object), typography: { fontSize: { ui: base } } })); });
+    layOut(width);
+    const actions = hostsById("desktop-toolbar-end")[0]!.findAll((node) => (node.type as unknown) === "Pressable").map((node) => node.props.testID);
+    act(() => hostsById("desktop-search-toggle")[0]!.props.onPress());
+    expect(hostsById("desktop-search-row")).toHaveLength(0);
+    const toolbar = hostsById("desktop-toolbar")[0]!;
+    const field = hostsById("desktop-toolbar-search")[0]!;
+    expect(toolbar.findAll((node) => node === field)).toHaveLength(1);
+    expect(field.findAll((node) => (node.type as unknown) === "Icon" && node.props.name === "Search")).toHaveLength(0);
+    const frames = measureHostTree(toolbar, { width });
+    const total = frames.get(hostsById("desktop-toolbar-total")[0]!)!;
+    const input = frames.get(field)!;
+    const mode = frames.get(hostsById("search-full-conversation-toggle")[0]!)!;
+    expect(input.width).toBeGreaterThanOrEqual(140 * base / 14 - 1);
+    expect(input.left + input.width).toBeLessThan(total.left);
+    expect(mode.left + mode.width).toBeLessThan(total.left);
+    expect(total.left + total.width / 2).toBeCloseTo(width / 2, 0);
+    expect(hostsById("desktop-toolbar-end")[0]!.findAll((node) => (node.type as unknown) === "Pressable").map((node) => node.props.testID)).toEqual(actions);
+    act(() => field.find((node) => (node.type as unknown) === "TextInput").props.onChangeText("needle"));
+    if (width > 600) {
+      const queried = measureHostTree(hostsById("desktop-toolbar")[0]!, { width });
+      const summary = queried.get(hostsById("desktop-toolbar-search-summary")[0]!)!;
+      expect(summary.left + summary.width).toBeLessThanOrEqual(queried.get(hostsById("desktop-toolbar-total")[0]!)!.left);
+    }
+    act(() => hostsById("desktop-search-toggle")[0]!.props.onPress());
+    expect(hostsById("desktop-toolbar-search")).toHaveLength(0);
+    expect(lastBoardParams("host-1").query).toBe("needle");
+  });
+
+  it("moves open search to its own row only when its measured slot stops fitting", () => {
     (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
     act(() => { renderer = TestRenderer.create(screen(false)); });
-    layOut(1600);
-    for (const width of [385, 420]) {
-      act(() => hostsById("filter-bar-controls")[0]!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 30 } } }));
-      expect(StyleSheet.flatten(hostsById("desktop-toolbar-search-group")[0]!.props.style).width).toBe(width);
+    layOut(600);
+    act(() => hostsById("desktop-search-toggle")[0]!.props.onPress());
+    act(() => hostsById("desktop-toolbar-search")[0]!.find((node) => (node.type as unknown) === "TextInput").props.onChangeText("needle"));
+    for (const width of [320, 600, 400, 800]) {
+      layOut(width);
+      expect(hostsById("desktop-search-row")).toHaveLength(width <= 400 ? 1 : 0);
+      expect(hostsById("desktop-toolbar-search")).toHaveLength(1);
+      expect(hostsById("desktop-toolbar-search")[0]!.find((node) => (node.type as unknown) === "TextInput").props.value).toBe("needle");
     }
   });
+
+  it.each([320, 600])("respects reduced motion when search opens and closes at %s", (width) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
+    let onReduce = (_on: boolean) => {};
+    const addListener = AccessibilityInfo.addEventListener;
+    const subscription = vi.spyOn(AccessibilityInfo, "addEventListener").mockImplementation(((name: string, listener: (enabled: boolean) => void) => {
+      if (name === "reduceMotionChanged") onReduce = listener;
+      return addListener("reduceMotionChanged", listener);
+    }) as typeof AccessibilityInfo.addEventListener);
+    try {
+      act(() => { renderer = TestRenderer.create(screen(false)); });
+      layOut(width);
+      act(() => onReduce(true));
+      vi.mocked(Animated.timing).mockClear();
+      act(() => hostsById("desktop-search-toggle")[0]!.props.onPress());
+      const reveal = hostsById("desktop-search-reveal")[0]!;
+      expect(reveal.props.style.opacity).toBe(1);
+      expect(reveal.props.style[width === 320 ? "height" : "width"]).toBeGreaterThan(0);
+      act(() => hostsById("desktop-search-toggle")[0]!.props.onPress());
+      expect(hostsById("desktop-toolbar-search")).toHaveLength(0);
+      expect(vi.mocked(Animated.timing).mock.calls.filter(([, config]) => config.duration === 180 && config.isInteraction === false)).toHaveLength(0);
+    } finally {
+      act(() => onReduce(false));
+      subscription.mockRestore();
+    }
+  });
+
+  it.each([320, 600])("animates search entry and exit at %s and reverses closing without losing the input", (width) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
+    const { key } = renderFocusBoard();
+    try {
+      layOut(width);
+      vi.mocked(Animated.timing).mockImplementation((value, config) => {
+        let timer: ReturnType<typeof setTimeout>;
+        return {
+          start: (done) => { timer = setTimeout(() => { (value as Animated.Value).setValue(config.toValue as number); done?.({ finished: true }); }, config.duration); },
+          stop: () => clearTimeout(timer), reset() {},
+        };
+      });
+      key("/");
+      const field = hostsById("desktop-toolbar-search")[0]!;
+      const progress = hostsById("desktop-search-reveal")[0]!.props.style.opacity;
+      expect(Animated.timing).toHaveBeenCalledWith(progress, expect.objectContaining({ toValue: 1, duration: 180, useNativeDriver: false }));
+      act(() => field.find((node) => (node.type as unknown) === "TextInput").props.onChangeText("needle"));
+      act(() => { vi.advanceTimersByTime(180); });
+      act(() => hostsById("desktop-search-toggle")[0]!.props.onPress());
+      expect(hostsById("desktop-toolbar-search")[0]).toBe(field);
+      expect(hostsById("desktop-search-reveal")[0]!.props).toMatchObject({ pointerEvents: "none", accessibilityElementsHidden: true, "aria-hidden": true });
+      expect(Animated.timing).toHaveBeenCalledWith(progress, expect.objectContaining({ toValue: 0, duration: 180 }));
+      act(() => { vi.advanceTimersByTime(90); });
+      key("/");
+      act(() => { vi.advanceTimersByTime(180); });
+      expect(hostsById("desktop-toolbar-search")[0]).toBe(field);
+      expect(hostsById("desktop-search-reveal")[0]!.props.pointerEvents).toBe("auto");
+      act(() => hostsById("desktop-search-toggle")[0]!.props.onPress());
+      act(() => { vi.advanceTimersByTime(180); });
+      expect(hostsById("desktop-toolbar-search")).toHaveLength(0);
+      expect(lastBoardParams("host-1").query).toBe("needle");
+    } finally {
+      act(() => renderer?.unmount()); renderer = undefined;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["web", "ios", "android"])("keeps %s inline search matched to the current lane across presets, folding and resizing", async (os) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    act(() => { renderer = TestRenderer.create(screen(false, {}, { ...(theme as object), typography: { fontSize: { ui: 14 } } })); });
+    layOut(1600);
+    const prefix = os === "web" ? "desktop" : "tablet";
+    const controller = () => renderer!.root.findByType(os === "web" ? DesktopToolbar : TabletToolbar).props.board;
+    const lane = () => StyleSheet.flatten(hostsById("lane-surface-running")[0]!.props.style).width;
+    const field = () => StyleSheet.flatten(hostsById(`${prefix}-toolbar-search`)[0]!.props.style).width;
+    for (const [size, expected] of [["narrow", 280], ["default", 340], ["wide", 388]] as const) {
+      await act(async () => { controller().setLaneWidth(size); });
+      expect(field()).toBe(expected);
+      expect(field()).toBe(lane());
+      const frames = measureHostTree(hostsById(`${prefix}-toolbar`)[0]!, { width: 1600 });
+      expect(frames.get(hostsById(`${prefix}-toolbar-search`)[0]!)!.width).toBe(expected);
+    }
+    await act(async () => { controller().setLaneWidth("default"); });
+    layOut(1300);
+    expect(field()).toBe(313);
+    act(() => hostsById("lane-needs_input")[0]!.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityLabel === "Collapse lane")[0]!.props.onPress());
+    expect(field()).toBe(os === "web" ? 340 : 313);
+    expect(field()).toBe(lane());
+    layOut(1200);
+    expect(field()).toBe(os === "web" ? 340 : 300);
+    expect(field()).toBe(lane());
+  });
+
+  it.each(["web", "ios", "android"])("keeps %s separate-row search independent of lane width", async (os) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    act(() => { renderer = TestRenderer.create(screen(false, {}, { ...(theme as object), typography: { fontSize: { ui: 21 } } })); });
+    layOut(600);
+    const prefix = os === "web" ? "desktop" : "tablet";
+    const controller = () => renderer!.root.findByType(os === "web" ? DesktopToolbar : TabletToolbar).props.board;
+    act(() => hostsById(`${prefix}-search-toggle`)[0]!.props.onPress());
+    for (const [size, expected] of [["narrow", 244], ["default", 284], ["wide", 300]] as const) {
+      await act(async () => { controller().setLaneWidth(size); });
+      expect(StyleSheet.flatten(hostsById("lane-surface-running")[0]!.props.style).width).toBe(expected);
+      const row = hostsById(`${prefix}-search-row`)[0]!;
+      const field = hostsById(`${prefix}-toolbar-search`)[0]!;
+      expect(StyleSheet.flatten(field.props.style).width).toBe(320);
+      expect(measureHostTree(row, { width: 600 }).get(field)!.width).toBe(320);
+    }
+    layOut(480);
+    const field = hostsById(`${prefix}-toolbar-search`)[0]!;
+    expect(StyleSheet.flatten(field.props.style).width).toBe(320);
+    expect(measureHostTree(hostsById(`${prefix}-search-row`)[0]!, { width: 480 }).get(field)!.width).toBe(320);
+  });
+
+  it.each(["web", "ios", "android"].flatMap((os) => (["en", "zh"] as const).map((language) => ({ os, language }))))("sizes $os/$language search with the lanes across layouts and filter measurements", ({ os, language }) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    updateEnhancerPreferences({ language });
+    act(() => { renderer = TestRenderer.create(screen(false, { q: "needle", agent: "claude" }, { ...(theme as object), typography: { fontSize: { ui: 14 } } })); });
+    const prefix = os === "web" ? "desktop" : "tablet";
+    for (const [width, expected] of [[960, 300], [1200, 300], [1300, 313], [1600, 340], [960, 300]] as const) {
+      layOut(width);
+      if (os === "web") act(() => hostsById("filter-bar-controls")[0]!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: width / 3, height: 30 } } }));
+      const bar = hostsById(`${prefix}-toolbar`)[0]!;
+      const field = hostsById(`${prefix}-toolbar-search`)[0]!;
+      const frames = measureHostTree(bar, { width });
+      expect(frames.get(field)!.width).toBeCloseTo(expected, 0);
+      const group = frames.get(hostsById(`${prefix}-toolbar-search-group`)[0]!)!;
+      expect(group.left + group.width).toBeLessThanOrEqual(frames.get(hostsById(`${prefix}-toolbar-total`)[0]!)!.left);
+      expect(hostsById(`${prefix}-search-toggle`)).toHaveLength(0);
+      expect(hostsById(`${prefix}-search-row`)).toHaveLength(0);
+    }
+  });
+
+  it.each(([
+    ["web", 320, 14], ["web", 600, 21],
+    ["ios", 320, 14], ["ios", 600, 21], ["ios", 960, 28],
+    ["android", 320, 14], ["android", 600, 21], ["android", 960, 28],
+  ] as const).flatMap(([os, width, base]) => (["en", "zh"] as const).map((language) => ({ os, width, base, language }))))("$os/$language at $width/UI$base opens a bounded search row and preserves its query on close", ({ os, width, base, language }) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    updateEnhancerPreferences({ language });
+    act(() => { renderer = TestRenderer.create(screen(false, {}, { ...(theme as object), typography: { fontSize: { ui: base } } })); });
+    layOut(width);
+    const prefix = os === "web" ? "desktop" : "tablet";
+    expect(hostsById(`${prefix}-toolbar-search`)).toHaveLength(0);
+    const actions = hostsById(`${prefix}-toolbar-end`)[0]!.findAll((node) => (node.type as unknown) === "Pressable").map((node) => node.props.testID);
+    act(() => hostsById(`${prefix}-search-toggle`)[0]!.props.onPress());
+    const row = hostsById(`${prefix}-search-row`)[0]!;
+    const field = hostsById(`${prefix}-toolbar-search`)[0]!;
+    expect(hostParentOf(hostsById(`${prefix}-toolbar-search-group`)[0]!)).toBe(row);
+    const input = field.find((node) => (node.type as unknown) === "TextInput");
+    expect(input.props.autoFocus).toBe(true);
+    expect(hostsById(`${prefix}-toolbar-total`)).toHaveLength(1);
+    expect(hostsById(`${prefix}-toolbar-end`)[0]!.findAll((node) => (node.type as unknown) === "Pressable").map((node) => node.props.testID)).toEqual(actions);
+    const frames = measureHostTree(row, { width });
+    expect(frames.get(field)!.width).toBeLessThanOrEqual(320);
+    expect(frames.get(field)!.width).toBeGreaterThan(100);
+    for (const node of [field, hostsById("search-full-conversation-toggle")[0]!, hostsById(`${prefix}-search-close`)[0]!]) {
+      const frame = frames.get(node)!;
+      expect(frame.left).toBeGreaterThanOrEqual(0);
+      expect(frame.left + frame.width).toBeLessThanOrEqual(width);
+    }
+    act(() => input.props.onChangeText("needle"));
+    act(() => hostsById(`${prefix}-search-close`)[0]!.props.onPress());
+    expect(hostsById(`${prefix}-toolbar-search`)).toHaveLength(0);
+    expect(lastBoardParams("host-1").query).toBe("needle");
+    act(() => hostsById(`${prefix}-search-toggle`)[0]!.props.onPress());
+    expect(hostsById(`${prefix}-toolbar-search`)[0]!.find((node) => (node.type as unknown) === "TextInput").props.value).toBe("needle");
+  });
+
+  it.each(["web", "ios", "android"])("preserves %s search through breakpoint and font-size changes", (os) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    const boardTheme = (base: number) => ({ ...(theme as object), typography: { fontSize: { ui: base } } });
+    act(() => { renderer = TestRenderer.create(screen(false, {}, boardTheme(14))); });
+    layOut(959);
+    const prefix = os === "web" ? "desktop" : "tablet";
+    act(() => hostsById(`${prefix}-search-toggle`)[0]!.props.onPress());
+    act(() => hostsById(`${prefix}-toolbar-search`)[0]!.find((node) => (node.type as unknown) === "TextInput").props.onChangeText("needle"));
+    layOut(960);
+    expect(hostsById(`${prefix}-search-row`)).toHaveLength(0);
+    expect(hostsById(`${prefix}-search-toggle`)).toHaveLength(0);
+    expect(hostsById(`${prefix}-toolbar-search`)[0]!.find((node) => (node.type as unknown) === "TextInput").props.value).toBe("needle");
+    act(() => renderer!.update(screen(false, {}, boardTheme(21))));
+    expect(hostsById(`${prefix}-search-row`)).toHaveLength(os === "web" ? 0 : 1);
+    expect(hostsById(`${prefix}-toolbar-search`)[0]!.find((node) => (node.type as unknown) === "TextInput").props.value).toBe("needle");
+    act(() => hostsById(`${prefix}-search-${os === "web" ? "toggle" : "close"}`)[0]!.props.onPress());
+    layOut(1600);
+    expect(hostsById(`${prefix}-search-row`)).toHaveLength(0);
+    expect(hostsById(`${prefix}-toolbar-search`)[0]!.find((node) => (node.type as unknown) === "TextInput").props.value).toBe("needle");
+    layOut(600);
+    expect(hostsById(`${prefix}-toolbar-search`)).toHaveLength(0);
+    expect(lastBoardParams("host-1").query).toBe("needle");
+  });
+
+  it("opens compact search with / and closes it with Escape without clearing the query", () => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
+    const { doc, key } = renderFocusBoard();
+    try {
+      layOut(600);
+      expect(hostsById("desktop-search-row")).toHaveLength(0);
+      expect(key("/").preventDefault).toHaveBeenCalled();
+      const input = hostsById("desktop-toolbar-search")[0]!.find((node) => (node.type as unknown) === "TextInput");
+      expect(input.props.autoFocus).toBe(true);
+      act(() => input.props.onChangeText("needle"));
+      const blur = vi.fn();
+      doc.activeElement = { tagName: "INPUT", inBoard: true, blur };
+      expect(key("Escape").preventDefault).toHaveBeenCalled();
+      expect(blur).toHaveBeenCalled();
+      expect(hostsById("desktop-search-row")).toHaveLength(0);
+      expect(lastBoardParams("host-1").query).toBe("needle");
+    } finally {
+      act(() => renderer?.unmount());
+      renderer = undefined;
+      vi.unstubAllGlobals();
+    }
+  });
+  it("lets Escape close details after compact search moves inline", () => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
+    writeSidebarPreference({ open: false, width: 380 });
+    const { key } = renderFocusBoard();
+    try {
+      layOut(600);
+      key("/");
+      expect(hostsById("desktop-search-row")).toHaveLength(0);
+      layOut(2000);
+      const card = cards()[0]!;
+      act(() => card.props.onSelect(card.props.card));
+      expect(hostsById("sidebar-floating")).toHaveLength(1);
+      key("Escape");
+      expect(hostsById("sidebar-floating")).toHaveLength(0);
+    } finally {
+      act(() => renderer?.unmount());
+      renderer = undefined;
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows desktop toolbar outlines only on hover and enlarges their icons", () => {
     (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
     act(() => { renderer = TestRenderer.create(screen(false)); });
@@ -424,7 +720,7 @@ describe("Tasks search coverage and centred toolbar", () => {
       };
       expect(outline(), id).toMatchObject({ borderColor: "transparent", borderRadius: 7, width: 30, height: 30 });
       act(() => button().props.onHoverIn());
-      expect(outline(), id).toMatchObject({ borderColor: "#e2e2e6", borderRadius: 7, width: 30, height: 30 });
+      expect(outline(), id).toMatchObject({ borderColor: id === "empty-lanes-toggle" ? "#e2e2e6" : taskTokens(theme).borderStrong, borderRadius: 7, width: 30, height: 30 });
       act(() => button().props.onHoverOut());
       expect(outline(), id).toMatchObject({ borderColor: "transparent", borderRadius: 7 });
       if (id !== "sidebar-switch") expect(button().find((node) => (node.type as unknown) === "Icon").props.size, id).toBe(17);
@@ -501,7 +797,7 @@ describe("Tasks search coverage and centred toolbar", () => {
       expect(hostsById(id)[0]!.props.dataSet.bctip.endsWith(`(${key})`)).toBe(true);
     }
     act(() => hostsById("desktop-toolbar-more")[0]!.props.onPress());
-    expect(textOf(menuOption(BOARD_STRINGS[language].emptyGroups.row))).toContain("G");
+    expect(textOf(menuOption(BOARD_STRINGS[language].emptyGroups.hide))).toContain("G");
     expect(textOf(menuOption(BOARD_STRINGS[language].openSettings))).toContain(",");
     const toolbarText = textOf(hostsById("desktop-toolbar")[0]!);
     expect(toolbarText).toContain(language === "zh" ? "空格" : "Space");
@@ -667,7 +963,7 @@ describe("Tasks search coverage and centred toolbar", () => {
       if (os !== "web" && width >= 440 && width < 680) expect(StyleSheet.flatten(end.props.style).minWidth).toBeGreaterThan(0);
       else expect(StyleSheet.flatten(end.props.style).minWidth).toBe(0);
       expect(StyleSheet.flatten(end.props.style).justifyContent).toBe("flex-end");
-      expect(start.findAll((node) => (node.type as unknown) === "TextInput" || node.props.testID === "tablet-search-toggle").length).toBeGreaterThan(0);
+      expect(start.findAll((node) => (node.type as unknown) === "TextInput" || ["tablet-search-toggle", "desktop-search-toggle"].includes(node.props.testID)).length).toBeGreaterThan(0);
       expect(StyleSheet.flatten(total.props.style).flexShrink).toBe(0);
       expect(textOf(total.findByType(RollingTotal))).toBe(BOARD_STRINGS[language].total(6));
       const slots = bar.children.filter((node) => typeof node !== "string" && /toolbar-(start|total|end)$/.test(node.props.testID ?? ""));
@@ -760,12 +1056,12 @@ describe("F1: Web switch Space activation", () => {
     }
   });
 
-  it.each(["ios", "android"])("adds no keyboard props to native bar or sheet switches on %s", (os) => {
+  it.each(["ios", "android"])("adds no keyboard props to native visibility menu items on %s", (os) => {
     (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
     act(() => { renderer = TestRenderer.create(screen(false)); });
     layOut(1600);
-    act(() => hostsById("toolbar-filters")[0]!.props.onPress());
-    const switches = renderer!.root.findAll((node) => typeof node.type === "string" && node.props.accessibilityRole === "switch");
+    act(() => hostsById("tablet-view")[0]!.props.onPress());
+    const switches = renderer!.root.findAll((node) => typeof node.type === "string" && node.props.accessibilityRole === "menuitem" && node.props.accessibilityState?.checked !== undefined);
     expect(switches.length).toBeGreaterThan(1);
     for (const toggle of switches) for (const prop of ["onKeyDown", "onKeyUp", "onBlur"]) expect(toggle.props).not.toHaveProperty(prop);
   });
@@ -774,6 +1070,26 @@ describe("F1: Web switch Space activation", () => {
 describe("Tasks board, desktop", () => {
   beforeEach(() => {
     (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
+  });
+
+  it("restores the selected window after a page reload and honors a different route", async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
+    try {
+      await act(async () => { renderer = TestRenderer.create(screen(false, { win: "24h" })); });
+      layOut(1600);
+      act(() => renderer!.root.findAllByType(WindowSegments)[0]!.props.onChange("7d"));
+      expect(renderer!.root.findAllByType(WindowSegments)[0]!.props.value).toBe("7d");
+      act(() => renderer!.unmount());
+      resetBoardSessions();
+      await act(async () => { renderer = TestRenderer.create(screen(false, { win: "24h" })); });
+      layOut(1600);
+      expect(renderer!.root.findAllByType(WindowSegments)[0]!.props.value).toBe("7d");
+      await act(async () => renderer!.update(screen(false, { win: "all" })));
+      expect(renderer!.root.findAllByType(WindowSegments)[0]!.props.value).toBe("all");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it.each([
@@ -786,7 +1102,8 @@ describe("Tasks board, desktop", () => {
     updateEnhancerPreferences({ language });
     await act(async () => { renderer = TestRenderer.create(screen(false, { agent: "codex", ws: "wks_sample", win: "7d", sort: "title-asc" })); });
     layOut(width);
-    if (os !== "web") act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
+    const toggle = hostsById(os === "web" ? "desktop-search-toggle" : "tablet-search-toggle")[0];
+    if (toggle) act(() => toggle.props.onPress());
     const field = () => renderer!.root.find((node) => (node.type as unknown) === "TextInput" && node.props.accessibilityLabel === BOARD_STRINGS[language].search);
     const clear = () => renderer!.root.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityLabel === BOARD_STRINGS[language].menuSearch.clear);
     const before = lastBoardParams("host-1");
@@ -835,7 +1152,7 @@ describe("Tasks board, desktop", () => {
     const totals = renderer!.root.findAll((node) => node.type === RollingTotal);
     expect(totals.length).toBeGreaterThan(0);
     for (const total of totals) expect(total.findAll((node) => node.type === RollingCount)).toHaveLength(0);
-    act(() => hostsById("filter-sheet-subtasks")[0]!.props.onPress());
+    act(() => hostsById("subtasks-toggle")[0]!.props.onPress());
     pick("24h");
     expect(scopes()).toEqual(tablet);
     act(() => renderer!.root.findByType(TabletToolbar).props.board.setParams((params: BoardParams) => ({ ...params, sort: { key: "title", direction: "asc" } })));
@@ -1021,12 +1338,16 @@ describe("Tasks board, desktop", () => {
     act(() => renderer!.root.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityLabel === "Collapse lane")[1]!.props.onPress());
     const strip = () => pressable("Expand lane: Running");
     const idle = StyleSheet.flatten(strip().props.style);
+    vi.useFakeTimers();
     act(() => strip().props.onPressIn({ nativeEvent: { pageX: 100, pageY: 40 } }));
+    expect(StyleSheet.flatten(strip().props.style)).toEqual(idle);
+    act(() => { vi.advanceTimersByTime(100); });
     const pressed = StyleSheet.flatten(strip().props.style);
     expect(pressed.backgroundColor).not.toBe(idle.backgroundColor);
     expect({ ...pressed, backgroundColor: idle.backgroundColor }).toEqual(idle);
     act(() => strip().props.onPressOut({}));
     expect(StyleSheet.flatten(strip().props.style)).toEqual(idle);
+    vi.useRealTimers();
     act(() => strip().props.onPress());
     expect(cards().map((card) => card.props.card.id)).toContain("sample-running");
   });
@@ -2072,6 +2393,25 @@ describe("Tasks board, desktop", () => {
     }
   });
 
+  it.each([2000, 900, 600])("opens a hidden sidebar when a card is clicked at %i pt, including the same card again", (width) => {
+    writeSidebarPreference({ open: false, width: 380 });
+    act(() => { renderer = TestRenderer.create(screen(false)); });
+    layOut(width);
+    const panel = width < 760 ? "board-sheet" : "sidebar-floating";
+    const card = () => cards().find((node) => node.props.card.id === "sample-running")!;
+    expect(hostsById(panel)).toHaveLength(0);
+    act(() => card().props.onSelect(card().props.card));
+    expect(hostsById(panel)).toHaveLength(1);
+    expect(textOf(hostsById("detail-title")[0]!)).toBe(card().props.card.title);
+    toggleSidebarControl();
+    expect(hostsById(panel)).toHaveLength(0);
+    act(() => card().props.onSelect(card().props.card));
+    expect(hostsById(panel)).toHaveLength(1);
+    expect(textOf(hostsById("detail-title")[0]!)).toBe(card().props.card.title);
+    expect(readSidebarPreference().open).toBe(false);
+    expect(openAgent).not.toHaveBeenCalled();
+  });
+
   it("floats the sidebar over a narrow board only on demand, and puts it away on a tap outside", () => {
     act(() => {
       renderer = TestRenderer.create(screen(false));
@@ -2100,6 +2440,61 @@ describe("Tasks board, desktop", () => {
     act(() => renderer!.root.findByProps({ testID: "sidebar-switch" }).props.onPress());
     expect(hostsById("sidebar-floating")).toHaveLength(0);
     expect(readSidebarPreference().open).toBe(true);
+  });
+
+  it.each([
+    ["ios", 1100], ["ios", 1600], ["android", 1100], ["android", 1600],
+  ] as const)("%s shows and resizes the inline details handle at %i pt", async (os, viewport) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    const { TurboModuleRegistry } = await import("react-native");
+    const handleSetJSResponder = vi.fn();
+    const flushOperations = vi.fn();
+    const module = vi.spyOn(TurboModuleRegistry, "get").mockImplementation(((name: string) =>
+      name === "RNGestureHandlerModule" ? { handleSetJSResponder, flushOperations } : null) as typeof TurboModuleRegistry.get);
+    try {
+      act(() => { renderer = TestRenderer.create(screen(false)); });
+      layOut(viewport);
+      const handle = () => hostsById("sidebar-resize")[0]!;
+      const width = () => liveNumber(StyleSheet.flatten(hostsById("sidebar-inline")[0]!.props.style).width);
+      const event = (pageX: number) => ({ nativeEvent: { pageX } });
+      const start = () => act(() => {
+        handle().props.onStartShouldSetPanResponderCapture(event(700));
+        expect(handle().props.onStartShouldSetPanResponder()).toBe(true);
+        handle().props.onPanResponderGrant();
+      });
+      // This fork lets the details grow to 1200 (upstream: 800).
+      const max = Math.min(1200, viewport - 12 - 612);
+      expect(hostsById("floating-sidebar-resize")).toHaveLength(0);
+      expect(StyleSheet.flatten(hostsById("sidebar-resize-grabber")[0]!.props.style).opacity).toBe(0.5);
+      expect(StyleSheet.flatten(hostsById("sidebar-inline")[0]!.props.style).paddingLeft).toBeGreaterThan(StyleSheet.flatten(handle().props.style).width);
+      expect(handle().props.accessibilityValue).toEqual({ min: 260, max, now: 380 });
+      start();
+      if (os === "ios") {
+        expect(handleSetJSResponder).toHaveBeenCalledWith(expect.any(Number), true);
+        expect(flushOperations).toHaveBeenCalledTimes(1);
+      }
+      expect(handle().props.onPanResponderTerminationRequest()).toBe(false);
+      act(() => handle().props.onPanResponderMove(event(0)));
+      expect(width()).toBe(max);
+      act(() => handle().props.onPanResponderMove(event(1000)));
+      expect(width()).toBe(260);
+      expect(readSidebarPreference().width).toBe(380);
+      act(() => handle().props.onPanResponderTerminate());
+      expect(width()).toBe(380);
+      start();
+      act(() => handle().props.onPanResponderMove(event(660)));
+      expect(width()).toBe(420);
+      act(() => handle().props.onPanResponderRelease(event(650)));
+      expect(width()).toBe(430);
+      expect(readSidebarPreference().width).toBe(430);
+      act(() => handle().props.onAccessibilityAction({ nativeEvent: { actionName: "increment" } }));
+      expect(width()).toBe(450);
+      act(() => { renderer!.unmount(); renderer = TestRenderer.create(screen(false)); });
+      layOut(viewport);
+      expect(width()).toBe(450);
+    } finally {
+      module.mockRestore();
+    }
   });
 
   it.each([14, 21])("iPad floating sidebar uses smaller text at UI base %i and keeps other layouts unchanged", (base) => {
@@ -2233,14 +2628,80 @@ describe("Tasks board, desktop", () => {
     expect(width()).toBe(410);
   });
 
-  it("keeps the web floating sidebar at its original width without the tablet grabber", () => {
+  it("uses the desktop handle for the web floating sidebar", () => {
     act(() => { renderer = TestRenderer.create(screen(false)); });
     layOut(900);
     toggleSidebarControl();
     expect(StyleSheet.flatten(hostsById("sidebar-floating")[0]!.props.style).width).toBe(380);
     expect(StyleSheet.flatten(hostsById("sidebar-floating")[0]!.props.style).right).toBe(12);
-    expect(StyleSheet.flatten(hostsById("sidebar-floating")[0]!.props.style).paddingLeft).toBe(8);
+    expect(StyleSheet.flatten(hostsById("sidebar-floating")[0]!.props.style).paddingLeft).toBe(10);
+    expect(hostsById("sidebar-resize")).toHaveLength(1);
     expect(hostsById("floating-sidebar-resize")).toHaveLength(0);
+  });
+
+  it.each([900, 1600])("resizes a sidebar opened from a card after hiding it at %i pt", (viewport) => {
+    const listeners = new Map<string, (event: { pageX: number; clientY: number }) => void>();
+    vi.stubGlobal("window", { addEventListener() {}, removeEventListener() {} });
+    vi.stubGlobal("document", {
+      body: { style: {} },
+      addEventListener: (name: string, handler: (event: { pageX: number; clientY: number }) => void) => listeners.set(name, handler),
+      removeEventListener: (name: string) => listeners.delete(name),
+    });
+    vi.stubGlobal("requestAnimationFrame", (callback: () => void) => setTimeout(callback, 16));
+    vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+    try {
+      act(() => { renderer = TestRenderer.create(screen(false)); });
+      layOut(1600);
+      const inlineStyle = { ...StyleSheet.flatten(hostsById("sidebar-inline")[0]!.props.style) };
+      delete inlineStyle.opacity;
+      delete inlineStyle.transform;
+      toggleSidebarControl();
+      layOut(viewport);
+      expect(readSidebarPreference().open).toBe(false);
+      const select = () => {
+        const card = cards().find((node) => node.props.card.id === "sample-running")!;
+        act(() => card.props.onSelect(card.props.card));
+      };
+      select();
+      const panel = () => hostsById("sidebar-floating")[0]!;
+      const width = () => StyleSheet.flatten(panel().props.style).width;
+      const grabberOpacity = () => StyleSheet.flatten(hostsById("sidebar-resize-grabber")[0]!.props.style).opacity;
+      const laneWidths = () => LANE_ORDER.map((id) => StyleSheet.flatten(hostsById(`lane-surface-${id}`)[0]!.props.style).width);
+      const originalWidths = laneWidths();
+      expect(width()).toBe(380);
+      const floatingStyle = { ...StyleSheet.flatten(panel().props.style) };
+      delete floatingStyle.opacity;
+      delete floatingStyle.transform;
+      expect(floatingStyle).toEqual(inlineStyle);
+      expect(StyleSheet.flatten(hostsById("sidebar-slot")[0]!.props.style)).toMatchObject({ top: 0, bottom: 0 });
+      expect(hostsById("sidebar-inline")).toHaveLength(0);
+      act(() => panel().props.onPointerEnter());
+      expect(grabberOpacity()).toBe(0.5);
+      act(() => hostsById("sidebar-resize")[0]!.props.onPointerDown({ nativeEvent: { pageX: 1000, clientY: 200 } }));
+      act(() => panel().props.onPointerLeave());
+      expect(grabberOpacity()).toBe(0.5);
+      // This fork lets the details grow to 1200 (upstream: 800), within the board less its margins.
+      for (const [pageX, expected] of [[0, Math.min(1200, viewport - 24)], [2000, 260], [950, 430]] as const) {
+        act(() => listeners.get("pointermove")!({ pageX, clientY: 200 }));
+        act(() => { vi.advanceTimersByTime(16); });
+        expect(width()).toBe(expected);
+        expect(laneWidths()).toEqual(originalWidths);
+      }
+      act(() => listeners.get("pointerup")!({ pageX: 950, clientY: 200 }));
+      expect(grabberOpacity()).toBe(0);
+      expect(readSidebarPreference()).toMatchObject({ open: false, width: 430 });
+      expect(listeners.has("pointermove")).toBe(false);
+      expect(listeners.has("pointerup")).toBe(false);
+      toggleSidebarControl();
+      expect(hostsById("sidebar-floating")).toHaveLength(0);
+      select();
+      expect(width()).toBe(430);
+      expect(readSidebarPreference().open).toBe(false);
+    } finally {
+      act(() => renderer?.unmount());
+      renderer = undefined;
+      vi.unstubAllGlobals();
+    }
   });
 
   it("wires the cards: open jumps to the agent, a hidden parent toasts", () => {
@@ -2259,6 +2720,18 @@ describe("Tasks board, desktop", () => {
     expect(child.props.onStop).toBeUndefined();
     // Nor Unarchive, which runs through the same CLI.
     expect(child.props.onUnarchive).toBeUndefined();
+  });
+
+  it.each([false, true])("opens a hidden subtask's details from its parent (compact: %s)", (compact) => {
+    act(() => { renderer = TestRenderer.create(screen(compact, { q: "ring", sub: "1" })); });
+    if (!compact) layOut(1600);
+    else act(() => pressable("Running 1").props.onPress());
+    const parent = cards().find((card) => card.props.card.id === "sample-running")!;
+    expect(cards().some((card) => card.props.card.id === "sample-child-1")).toBe(false);
+    act(() => parent.props.onReveal("sample-child-1", "sample-running"));
+    expect(renderer!.root.findByType(TaskDetailCards).props.card.id).toBe("sample-child-1");
+    expect(host.toast).not.toHaveBeenCalled();
+    expect(openAgent).not.toHaveBeenCalled();
   });
 
   it("hands the cards Unarchive when the host has the CLI", async () => {
@@ -2346,10 +2819,8 @@ describe("Tasks board, desktop", () => {
       // A later click takes over from an older keyboard focus.
       act(() => cards().find((card) => card.props.card.id === first.id)!.props.onSelect(first));
       expect(cards().some((card) => card.props.focused)).toBe(false);
-      if (preferred) {
-        key(" ");
-        expect(hostsById("detail-title")).toHaveLength(0);
-      }
+      key(" ");
+      expect(hostsById("detail-title")).toHaveLength(0);
       key(" ");
       expect(title()).toBe(first.title);
       expect(readSidebarPreference().open).toBe(preferred);
@@ -2478,6 +2949,8 @@ describe("Tasks board, desktop", () => {
       const selected = cards().find((card) => card.props.card.id === "sample-running")!;
       focus(selected.props.card.id);
       act(() => selected.props.onSelect(selected.props.card));
+      expect(textOf(hostsById("detail-title")[0]!)).toBe(selected.props.card.title);
+      toggleSidebarControl();
       // The host's global shortcut can preventDefault and stopPropagation before document.
       const clickedPreview = key(" ", true);
       expect(clickedPreview.preventDefault).toHaveBeenCalledTimes(1);
@@ -2534,6 +3007,8 @@ describe("Tasks board, desktop", () => {
       layOut(1600);
       const selected = cards().find((card) => card.props.card.id === "sample-running")!;
       act(() => selected.props.onSelect(selected.props.card));
+      expect(textOf(hostsById("detail-title")[0]!)).toBe(selected.props.card.title);
+      toggleSidebarControl();
       expect(hostsById("detail-title")).toHaveLength(0);
       for (const active of [{ tagName: "INPUT", inBoard: true }, { tagName: "TEXTAREA", inBoard: true }, { isContentEditable: true, inBoard: true }, { inBoard: false }]) {
         doc.activeElement = active;
@@ -3287,7 +3762,7 @@ describe("Tasks board, desktop refresh button", () => {
     act(() => refreshButton().props.onPress());
     expect(StyleSheet.flatten(hostsById("desktop-more-menu")[0]!.props.style)).toMatchObject({ width: "max-content", maxWidth: NATIVE(200) });
     expect(textOf(menuOption(BOARD_STRINGS[language].refreshTasks))).toContain("⌥R");
-    expect(menuOption(BOARD_STRINGS[language].emptyGroups.row)).toBeDefined();
+    expect(menuOption(BOARD_STRINGS[language].emptyGroups.hide)).toBeDefined();
   });
 
   it.each(["done", "failed", "rejected"] as const)("shows a loading ring only while refreshing (%s), without redrawing a row", async (outcome) => {
@@ -3834,20 +4309,24 @@ describe("F2: tablet overlays outside toolbar AX bounds", () => {
     expect(hostsById("tablet-view-overlay")).toHaveLength(0);
   });
 
-  it.each([["android", 480, 14], ["ios", 600, 21]] as const)("%s at %i pt/UI%i opens search inside the toolbar with autofocus, clear and dismissal", (os, width, base) => {
+  it.each([["android", 480, 14], ["ios", 600, 21]] as const)("%s at %i pt/UI%i opens search below the toolbar with autofocus, clear and dismissal", (os, width, base) => {
     mount(os, width, base);
     const height = style(bar()).height;
     act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
     const search = () => hostsById("tablet-toolbar-search")[0]!;
     expect(hostsById("tablet-search-popover")).toHaveLength(0);
     expect(hostParentOf(search())?.props.testID).toBe("tablet-toolbar-search-group");
-    expect(hostParentOf(hostsById("tablet-toolbar-search-group")[0]!)?.props.testID).toBe("tablet-toolbar-start");
-    expect(bar().findAll((node) => node === search())).toHaveLength(1);
-    expect(style(search())).toMatchObject({ height: Math.round(40 * base / 14), flex: 1, minWidth: 0 });
+    expect(hostParentOf(hostsById("tablet-toolbar-search-group")[0]!)?.props.testID).toBe("tablet-search-row");
+    expect(bar().findAll((node) => node === search())).toHaveLength(0);
+    expect(hostsById("tablet-search-toggle")).toHaveLength(1);
+    expect(style(hostsById("tablet-search-toggle")[0]!).backgroundColor).toBe("transparent");
+    expect(hostsById("tablet-toolbar-start")[0]!.children.map((node) => typeof node === "string" ? node : node.props.testID)).toEqual(["tablet-search-toggle"]);
+    expect(search().findAll((node) => (node.type as unknown) === "Icon" && node.props.name === "Search")).toHaveLength(0);
+    expect(style(search())).toMatchObject({ height: Math.round(40 * base / 14) - 8, width: 320, flexShrink: 1, minWidth: 0 });
     expect(style(search()).position).toBeUndefined();
-    expect(hostsById("tablet-toolbar-total")).toHaveLength(0);
-    expect(style(hostsById("tablet-toolbar-start")[0]!).minWidth).toBe(0);
-    expect(style(end())).toMatchObject({ flex: 0, flexBasis: "auto" });
+    expect(hostsById("tablet-toolbar-total")).toHaveLength(1);
+    expect(style(hostsById("tablet-toolbar-start")[0]!).minWidth).toBe(style(end()).minWidth);
+    expect(style(end())).toMatchObject({ flex: 1, flexBasis: 0 });
     expect(hostsById("toolbar-filters")).toHaveLength(1);
     expect(hostsById("tablet-view")).toHaveLength(1);
     const input = () => search().find((node) => (node.type as unknown) === "TextInput");
@@ -3855,11 +4334,13 @@ describe("F2: tablet overlays outside toolbar AX bounds", () => {
     expect(style(input()).fontSize).toBe(Math.round(12 * base / 14));
     act(() => input().props.onChangeText("needle"));
     expect(input().props.value).toBe("needle");
+    expect(style(hostsById("tablet-search-toggle")[0]!).backgroundColor).toBe("transparent");
     act(() => hostsById("tablet-search-clear")[0]!.props.onPress());
     expect(input().props.value).toBe("");
     expect(hostsById("tablet-search-clear")).toHaveLength(0);
     act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
     expect(hostsById("tablet-toolbar-search")).toHaveLength(0);
+    expect(style(hostsById("tablet-search-toggle")[0]!).backgroundColor).toBe("transparent");
     expect(hostsById("tablet-toolbar-total")).toHaveLength(1);
     act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
     act(() => hostsById("tablet-view")[0]!.props.onPress());
@@ -3874,11 +4355,12 @@ describe("F2: tablet overlays outside toolbar AX bounds", () => {
     expect(style(bar()).height).toBe(height);
   });
 
-  it.each([["ios", 600], ["ios", 1200], ["android", 600], ["android", 1200]] as const)("%s at %i keeps the search compact and dismisses only an empty query", (os, width) => {
+  it.each([["ios", 600], ["ios", 800], ["android", 600], ["android", 800]] as const)("%s at %i keeps the search compact and dismisses only an empty query", (os, width) => {
     mount(os, width);
     act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
-    expect(style(hostsById("tablet-toolbar-search-group")[0]!).maxWidth).toBe(238);
+    expect(style(hostsById("tablet-toolbar-search")[0]!).width).toBe(320);
     expect(hostsById("tablet-toolbar-backdrop")).toHaveLength(1);
+    expect(style(hostsById("tablet-toolbar-backdrop")[0]!).zIndex).toBeLessThan(style(bar()).zIndex);
     act(() => hostsById("search-full-conversation-toggle")[0]!.props.onPress());
     expect(hostsById("tablet-toolbar-search")).toHaveLength(1);
     const input = () => hostsById("tablet-toolbar-search")[0]!.find((node) => (node.type as unknown) === "TextInput");
@@ -3896,10 +4378,9 @@ describe("F2: tablet overlays outside toolbar AX bounds", () => {
     expect(hostsById("tablet-search-toggle")).toHaveLength(1);
   });
 
-  it.each(["ios", "android"])("starts %s search collapsed on a wide toolbar", (os) => {
+  it.each(["ios", "android"])("shows %s fixed-width search inline on a wide toolbar", (os) => {
     mount(os, 1200);
-    expect(hostsById("tablet-toolbar-search")).toHaveLength(0);
-    act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
+    expect(hostsById("tablet-search-toggle")).toHaveLength(0);
     expect(hostsById("tablet-toolbar-search")).toHaveLength(1);
     expect(hostParentOf(hostsById("tablet-toolbar-search-group")[0]!)?.props.testID).toBe("tablet-toolbar-start");
     expect(StyleSheet.flatten(hostsById("search-full-conversation-toggle")[0]!.props.style)).toMatchObject({ borderWidth: 0, borderRadius: 7 });
@@ -3972,8 +4453,8 @@ describe("Tasks board, tablet filters", () => {
     expect(panel.findAll((node) => (node.type as unknown) === "ScrollView")).toHaveLength(1);
     const footer = hostsById("filter-sheet-footer")[0]!;
     expect(hostParentOf(footer)).toBe(hostParentOf(hostsById("filter-sheet-scroll")[0]!));
-    act(() => hostsById("filter-sheet-empty-groups")[0]!.props.onPress());
-    expect(hostsById("tablet-filter-popover")).toHaveLength(1);
+    expect(hostsById("filter-sheet-subtasks")).toHaveLength(0);
+    expect(hostsById("filter-sheet-empty-groups")).toHaveLength(0);
     act(() => hostsById("tablet-toolbar-backdrop")[0]!.props.onPress());
     expect(hostsById("tablet-filter-popover")).toHaveLength(0);
     open();
@@ -3986,6 +4467,7 @@ describe("Tasks board, tablet filters", () => {
     act(() => hostsById("tablet-view")[0]!.props.onPress());
     expect(hostsById("tablet-filter-popover")).toHaveLength(0);
     open();
+    if (!hostsById("tablet-search-toggle").length) layOut(800);
     act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
     expect(hostsById("tablet-filter-popover")).toHaveLength(0);
     open();
@@ -4017,8 +4499,8 @@ describe("Tasks board, tablet filters", () => {
     const panel = hostsById("tablet-filter-popover")[0]!;
     expect(Number(StyleSheet.flatten(panel.props.style).width)).toBeLessThanOrEqual(width - 24);
     expect(StyleSheet.flatten(panel.props.style).elevation).toBe(8);
-    act(() => hostsById("filter-sheet-empty-groups")[0]!.props.onPress());
-    expect(hostsById("tablet-filter-popover")).toHaveLength(1);
+    expect(hostsById("filter-sheet-subtasks")).toHaveLength(0);
+    expect(hostsById("filter-sheet-empty-groups")).toHaveLength(0);
     act(() => hostsById("tablet-toolbar-backdrop")[0]!.props.onPress());
     expect(hostsById("tablet-filter-popover")).toHaveLength(0);
   });
@@ -4063,12 +4545,13 @@ describe("Tasks board, tablet filters", () => {
     layOut(width);
     expect(hostsById("filter-bar")).toHaveLength(0);
     const bar = hostsById("tablet-toolbar")[0]!;
-    expect(StyleSheet.flatten(bar.props.style)).toMatchObject({ height: Math.round(48 * Math.max(1, base / 14)), flexDirection: "row", flexShrink: 0 });
+    expect(StyleSheet.flatten(bar.props.style)).toMatchObject({ height: Math.round(40 * Math.max(1, base / 14)), flexDirection: "row", flexShrink: 0 });
     expect(StyleSheet.flatten(hostsById("tablet-toolbar-end")[0]!.props.style).gap).toBe(0);
     const buttons = bar.findAll((n) => (n.type as unknown) === "Pressable" && n.props.testID !== "search-full-conversation-toggle");
     for (const button of buttons) {
       const style = StyleSheet.flatten(button.props.style);
-      expect(style.height).toBe(Math.round(40 * Math.max(1, base / 14)));
+      expect(style.height).toBe(Math.round(32 * Math.max(1, base / 14)));
+      expect(style.minWidth).toBe(Math.round(32 * Math.max(1, base / 14)));
       expect(style.borderRadius).toBe(7);
       const icon = button.find((node) => button.props.testID === "sidebar-switch" ? typeof node.type === "string" && node.props.testID === "panel-mark" : (node.type as unknown) === "Icon");
       expect(StyleSheet.flatten(hostParentOf(icon)!.props.style)).toMatchObject({ width: 18, height: 18 });
@@ -4079,9 +4562,9 @@ describe("Tasks board, tablet filters", () => {
     expect(textOf(view).includes(BOARD_STRINGS[language].view)).toBe(false);
     act(() => view.props.onPress());
     expect(hostsById("tablet-view-menu")).toHaveLength(1);
-    // Tablets leave the empty-groups switch to the filter panel.
+    // Visibility switches share the View menu.
     const items = hostsById("tablet-view-menu")[0]!.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityRole === "menuitem").map(textOf);
-    expect(items.some((text) => text.startsWith(BOARD_STRINGS[language].emptyGroups.row))).toBe(false);
+    expect(items.some((text) => text.startsWith(BOARD_STRINGS[language].emptyGroups.row))).toBe(true);
     act(() => hostsById("tablet-toolbar-backdrop")[0]!.props.onPress());
     expect(hostsById("tablet-view-menu")).toHaveLength(0);
   });
@@ -4096,12 +4579,12 @@ describe("Tasks board, tablet filters", () => {
     const order = () => end().findAll((node) => (node.type as unknown) === "Pressable").map((node) => node.props.testID);
     const expected = ["subtasks-toggle", "toolbar-filters", "tablet-view", "sidebar-switch"];
     expect(order()).toEqual(expected);
-    // View owns layout; subtask visibility and empty groups belong to filters.
+    // View owns layout and visibility switches.
     act(() => hostsById("tablet-view")[0]!.props.onPress());
     const strings = BOARD_STRINGS.en;
     const items = hostsById("tablet-view-menu")[0]!.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityRole === "menuitem").map(textOf);
-    expect(items.some((text) => text.startsWith(strings.showSubtasks))).toBe(false);
-    expect(items.some((text) => text.startsWith(strings.emptyGroups.row))).toBe(false);
+    expect(items.some((text) => text.startsWith(strings.showSubtasks))).toBe(true);
+    expect(items.some((text) => text.startsWith(strings.emptyGroups.row))).toBe(true);
     expect(items.some((text) => text.startsWith(strings.archivedLane.row))).toBe(true);
     act(() => hostsById("tablet-toolbar-backdrop")[0]!.props.onPress());
     act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
@@ -4113,7 +4596,7 @@ describe("Tasks board, tablet filters", () => {
     const field = hostsById("tablet-toolbar-search")[0]!.find((node) => (node.type as unknown) === "TextInput" && [BOARD_STRINGS.en.search, BOARD_STRINGS.zh.search].includes(node.props.accessibilityLabel));
     act(() => field.props.onChangeText("needle"));
     expect(order()).toEqual(expected);
-    act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
+    expect(hostsById("tablet-search-toggle")).toHaveLength(1);
     expect(order()).toEqual(expected);
     act(() => hostsById("toolbar-filters")[0]!.props.onPress());
     expect(hostsById("filter-sheet-scroll")).toHaveLength(1);
@@ -4133,7 +4616,7 @@ describe("Tasks board, tablet filters", () => {
       expect(StyleSheet.flatten(reserve.props.style)).toMatchObject({ fontVariant: ["tabular-nums"], opacity: 0 });
       expect(hostsById("tablet-toolbar-total")[0]!.props.accessibilityLabel).toBe(BOARD_STRINGS[language].total(total));
       const slot = StyleSheet.flatten(hostsById("tablet-total-slot")[0]!.props.style);
-      const search = StyleSheet.flatten(hostsById("tablet-search-toggle")[0]!.props.style);
+      const search = StyleSheet.flatten((hostsById("tablet-search-toggle")[0] ?? hostsById("tablet-toolbar-search")[0])!.props.style);
       slotStyle ??= slot; searchStyle ??= search;
       expect(slot).toEqual(slotStyle); expect(search).toEqual(searchStyle);
       // Only the invisible ruler participates in the slot's intrinsic width.
@@ -4152,6 +4635,7 @@ describe("Tasks board, tablet filters", () => {
     const fill = (node: ReactTestInstance) => StyleSheet.flatten(node.find((child) => typeof child.type === "string" && child.props.testID === "panel-mark-fill").props.style).width;
     for (let i = 0; i < 3; i++) {
       const open = button().props.accessibilityState.selected;
+      expect(StyleSheet.flatten(button().props.style).backgroundColor).toBe("transparent");
       expect(fill(button())).toBe(open ? 3.5 : 1.5);
       act(() => hostsById("tablet-view")[0]!.props.onPress());
       const strings = renderer!.root.findByType(TabletToolbar).props.board.strings;
@@ -4160,6 +4644,7 @@ describe("Tasks board, tablet filters", () => {
       act(() => hostsById("tablet-toolbar-backdrop")[0]!.props.onPress());
       await act(async () => button().props.onPress());
       expect(button().props.accessibilityState.selected).toBe(!open);
+      expect(StyleSheet.flatten(button().props.style).backgroundColor).toBe("transparent");
       expect(fill(button())).toBe(open ? 1.5 : 3.5);
       await act(async () => button().props.onPress());
       expect(fill(button())).toBe(open ? 3.5 : 1.5);
@@ -4187,11 +4672,50 @@ describe("Tasks board, tablet filters", () => {
     expect(lastBoardParams("host-1")).toMatchObject({ providers: ["codex"], labels: ["frontend"], workspaceIds: ["wks_sample"] });
     // Agent, label and workspace; the subtask switch is not a filter.
     expect(textOf(hostsById("tablet-filter-count")[0]!)).toBe("3");
-    await act(async () => hostsById("filter-sheet-subtasks")[0]!.props.onPress());
+    expect(hostsById("filter-sheet-subtasks")).toHaveLength(0);
     expect(hostsById("filter-sheet-archived")).toHaveLength(0);
     expect(host.save).not.toHaveBeenCalled();
     act(() => hostsById("filter-sheet-reset")[0]!.props.onPress());
     expect(lastBoardParams("host-1")).toMatchObject({ providers: [], labels: [], workspaceIds: [] });
+  });
+
+  it.each(["ios", "android"])("%s moves filter switches into View and retains their saved state", async (os) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    const handle = (data as unknown as { __handle: { providers: object[] } }).__handle;
+    const saved = handle.providers;
+    handle.providers = [...saved, { id: "pi", label: "Pi" }];
+    try {
+      await act(async () => { renderer = TestRenderer.create(screen(false)); });
+      layOut(800);
+      act(() => hostsById("toolbar-filters")[0]!.props.onPress());
+      expect(hostsById("filter-sheet-subtasks")).toHaveLength(0);
+      expect(hostsById("filter-sheet-empty-groups")).toHaveLength(0);
+      expect(textOf(hostsById("filter-sheet-scroll")[0]!)).toContain("Pi");
+      act(() => hostsById("tablet-view")[0]!.props.onPress());
+      const rows = () => hostsById("tablet-view-menu")[0]!.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityRole === "menuitem");
+      expect(rows().slice(-4).map(textOf)).toEqual(["Show subtasks", "Show all", "Collapse empty lanes", "Show the archived lane"]);
+      for (const label of ["Show subtasks", "Show all"]) {
+        expect(menuOption(label).props.accessibilityState.checked).toBe(true);
+        await act(async () => menuOption(label).props.onPress());
+        expect(menuOption(label).props.accessibilityState.checked).toBe(false);
+        expect(hostsById("tablet-view-menu")).toHaveLength(1);
+      }
+      expect(hostsById("subtasks-toggle")[0]!.props.accessibilityState.selected).toBe(false);
+      expect(deviceTasksStore().snapshot().values).toMatchObject({ hideSubtasks: true, showEmptyGroups: false });
+      expect(host.save).not.toHaveBeenCalled();
+      act(() => hostsById("toolbar-filters")[0]!.props.onPress());
+      expect(textOf(hostsById("filter-sheet-scroll")[0]!)).not.toContain("Pi");
+      act(() => hostsById("tablet-view")[0]!.props.onPress());
+      expect(menuOption("Show subtasks").props.accessibilityState.checked).toBe(false);
+      expect(menuOption("Show all").props.accessibilityState.checked).toBe(false);
+      for (const label of ["Show subtasks", "Show all"]) {
+        await act(async () => menuOption(label).props.onPress());
+        expect(menuOption(label).props.accessibilityState.checked).toBe(true);
+      }
+      expect(deviceTasksStore().snapshot().values).toMatchObject({ hideSubtasks: false, showEmptyGroups: true });
+    } finally {
+      handle.providers = saved;
+    }
   });
 
   it("opens sort and lane width from View and time range from filters", async () => {
@@ -4212,7 +4736,57 @@ describe("Tasks board, tablet filters", () => {
     expect(lastBoardParams("host-1").doneWindow).toBe("7d");
   });
 
-  it.each([320, 480, 600])("at %i pt opens search in the same toolbar row", (width) => {
+  it.each([
+    ["ios", 14, 40], ["android", 14, 40],
+    ["ios", 15, 43], ["android", 15, 43],
+    ["ios", 21, 60], ["android", 21, 60],
+  ] as const)("%s at UI%i uses a %i-point tablet toolbar", (os, base, height) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    act(() => { renderer = TestRenderer.create(screen(false, {}, { ...(theme as object), typography: { fontSize: { ui: base } } })); });
+    layOut(1000);
+    expect(StyleSheet.flatten(hostsById("tablet-toolbar")[0]!.props.style).height).toBe(height);
+    if (hostsById("tablet-search-toggle").length) act(() => hostsById("tablet-search-toggle")[0]!.props.onPress());
+    expect(StyleSheet.flatten(hostsById("tablet-toolbar-search")[0]!.props.style).height).toBe(height - 8);
+    const input = hostsById("tablet-toolbar-search")[0]!.find((node) => (node.type as unknown) === "TextInput");
+    expect(StyleSheet.flatten(input.props.style).fontSize).toBe(Math.round(12 * base / 14));
+    act(() => hostsById("toolbar-filters")[0]!.props.onPress());
+    expect(StyleSheet.flatten(hostsById("tablet-filter-popover")[0]!.props.style).top).toBe(height + 6);
+  });
+
+  it.each([
+    ["ios", "tablet-view", "tablet-view-menu"],
+    ["android", "tablet-view", "tablet-view-menu"],
+    ["ios", "toolbar-filters", "tablet-filter-popover"],
+    ["android", "toolbar-filters", "tablet-filter-popover"],
+  ] as const)("%s covers the toolbar while %s is open and dismisses without activating its controls", (os, trigger, panel) => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    act(() => { renderer = TestRenderer.create(screen(false)); });
+    layOut(1000);
+    act(() => hostsById(trigger)[0]!.props.onPress());
+    expect(hostsById(panel)).toHaveLength(1);
+    const backdrop = hostsById("tablet-toolbar-backdrop")[0]!;
+    const toolbar = hostsById("tablet-toolbar")[0]!;
+    expect(hostParentOf(backdrop)).toBe(hostParentOf(toolbar));
+    const backdropStyle = StyleSheet.flatten(backdrop.props.style);
+    expect(backdropStyle).toMatchObject({ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 });
+    expect(backdropStyle.zIndex).toBeGreaterThan(StyleSheet.flatten(toolbar.props.style).zIndex);
+    expect(backdropStyle.zIndex).toBeLessThan(StyleSheet.flatten(hostsById(panel)[0]!.props.style).zIndex);
+    const sidebar = hostsById("sidebar-switch")[0]!.props.accessibilityState.selected;
+    const subtasks = hostsById("subtasks-toggle")[0]!.props.accessibilityState.selected;
+    for (const id of ["tablet-toolbar", "tablet-toolbar-end"]) {
+      expect(hostsById(id)[0]!.props.pointerEvents).toBe("box-none");
+    }
+    expect(hostsById("tablet-toolbar-total")[0]!.props.pointerEvents).toBe("none");
+    act(() => hostsById("tablet-toolbar-backdrop")[0]!.props.onPress());
+    expect(hostsById(panel)).toHaveLength(0);
+    expect(hostsById("tablet-toolbar-backdrop")).toHaveLength(0);
+    expect(hostsById("sidebar-switch")[0]!.props.accessibilityState.selected).toBe(sidebar);
+    expect(hostsById("subtasks-toggle")[0]!.props.accessibilityState.selected).toBe(subtasks);
+    act(() => hostsById(trigger)[0]!.props.onPress());
+    expect(hostsById(panel)).toHaveLength(1);
+  });
+
+  it.each([320, 480, 600])("at %i pt opens search below the toolbar", (width) => {
     act(() => { renderer = TestRenderer.create(screen(false)); });
     layOut(width);
     const height = StyleSheet.flatten(hostsById("tablet-toolbar")[0]!.props.style).height;
@@ -4325,7 +4899,9 @@ describe("Tasks board, tablet filters", () => {
     }
   });
 
-  it("flips the groups at 0 from the more menu and saves it", async () => {
+  it.each(["en", "zh"] as const)("uses %s actions and icons without checks for empty groups in More", async (language) => {
+    updateEnhancerPreferences({ language });
+    const strings = BOARD_STRINGS[language];
     const handle = (data as unknown as { __handle: { providers: object[] } }).__handle;
     const saved = handle.providers;
     handle.providers = [...saved, { id: "pi", label: "Pi" }];
@@ -4337,22 +4913,27 @@ describe("Tasks board, tablet filters", () => {
       layOut(2400);
       const rows = () => renderer!.root.findByProps({ testID: "sidebar-groups" }).findAll((node) => node.props.accessibilityRole === "checkbox" && typeof node.props.onPress === "function").map((node) => node.props.accessibilityLabel);
       act(() => hostsById("desktop-toolbar-more")[0]!.props.onPress());
-      expect(menuOption("Show all").props.accessibilityState.checked).toBe(true);
-      expect(menuOption("Show all").findAll((node) => (node.type as unknown) === "Icon")[0]!.props.name).toBe("Layers");
+      expect(menuOption(strings.emptyGroups.hide).props.accessibilityState.checked).toBeUndefined();
+      expect(menuOption(strings.emptyGroups.hide).findAll((node) => (node.type as unknown) === "Icon").map((node) => node.props.name)).toEqual(["EyeOff"]);
+      expect(textOf(menuOption(strings.emptyGroups.hide))).toContain("G");
       expect(rows().at(-1)).toBe("Pi 0");
-      await act(async () => menuOption("Show all").props.onPress());
+      await act(async () => menuOption(strings.emptyGroups.hide).props.onPress());
       expect(host.save).not.toHaveBeenCalled();
       expect(deviceTasksStore().snapshot().values).toMatchObject({ showEmptyGroups: false });
       act(() => hostsById("desktop-toolbar-more")[0]!.props.onPress());
-      expect(menuOption("Show all").props.accessibilityState.checked).toBe(false);
-      expect(menuOption("Show all").findAll((node) => (node.type as unknown) === "Icon")[0]!.props.name).toBe("ListFilter");
+      expect(menuOption(strings.emptyGroups.show).props.accessibilityState.checked).toBeUndefined();
+      expect(menuOption(strings.emptyGroups.show).findAll((node) => (node.type as unknown) === "Icon").map((node) => node.props.name)).toEqual(["Eye"]);
+      expect(textOf(menuOption(strings.emptyGroups.show))).toContain("G");
       expect(rows()).not.toContain("Pi 0");
+      await act(async () => menuOption(strings.emptyGroups.show).props.onPress());
+      expect(deviceTasksStore().snapshot().values).toMatchObject({ showEmptyGroups: true });
+      expect(rows().at(-1)).toBe("Pi 0");
     } finally {
       handle.providers = saved;
     }
   });
 
-  it.each([["ios", 480], ["ios", 600], ["android", 600], ["web", 600]] as const)("%s at %i pt keeps empty groups in the filter sheet and saves the switch", async (os, width) => {
+  it.each([["web", 600]] as const)("%s at %i pt keeps empty groups in the filter sheet and saves the switch", async (os, width) => {
     (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
     act(() => {
       renderer = TestRenderer.create(screen(false));
@@ -4374,13 +4955,11 @@ describe("Tasks board, tablet filters", () => {
     layOut(1600);
     if (os === "web") {
       act(() => hostsById("desktop-toolbar-more")[0]!.props.onPress());
-      expect(menuOption("Show all").props.accessibilityState.checked).toBe(false);
+      expect(menuOption("Show empty groups").props.accessibilityState.checked).toBeUndefined();
       act(() => hostsById("desktop-toolbar-more")[0]!.props.onPress());
       act(() => renderer!.root.find((node) => (node.type as unknown) === "Pressable" && node.props.dataSet?.bctip === "Filter by project").props.onPress());
       const row = renderer!.root.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityRole === "menuitem" && textOf(node).startsWith("Show all"));
       expect(row[0]!.props.accessibilityState).toMatchObject({ checked: false });
-    } else {
-      expect(hostsById("filter-sheet-empty-groups")[0]!.props.accessibilityState).toEqual({ checked: false });
     }
   });
 
@@ -4393,7 +4972,7 @@ describe("Tasks board, tablet filters", () => {
     const archived = () => renderer!.root.find((node) => (node.type as unknown) === "Pressable" && node.props.testID === "toolbar-archived");
     // The folded web header keeps the filter bar's order: empty lanes, then the archived lane, then the filters.
     const header = renderer!.root.findByType(DesktopToolbar).findAll((node) => (node.type as unknown) === "Pressable" && node.props.testID !== "sidebar-switch");
-    expect(header.map((node) => node.props.testID)).toEqual(["search-full-conversation-toggle", "empty-lanes-toggle", "toolbar-archived", "toolbar-filters", "desktop-toolbar-more"]);
+    expect(header.map((node) => node.props.testID)).toEqual(["desktop-search-toggle", "empty-lanes-toggle", "toolbar-archived", "toolbar-filters", "desktop-toolbar-more"]);
     expect(textOf(archived())).toBe("");
     expect(archived().find((node) => (node.type as unknown) === "Icon").props.name).toBe("Archive");
     expect(hostsById("archived-lane-toggle")).toHaveLength(0);
@@ -5404,7 +5983,7 @@ describe("Tasks board, phone", () => {
       const chips = () => workspaces().findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityRole === "checkbox").map(textOf);
       const header = () => sheet().find((node) => (node.type as unknown) === "View" && node.props.testID === "filter-sheet-workspace-header");
       const field = () => header().find((node) => (node.type as unknown) === "TextInput");
-      expect(sheet().props.stickyHeaderIndices).toEqual([1, 3]);
+      expect(sheet().props.stickyHeaderIndices).toEqual([1, 3, 5]);
       act(() => hostsById("filter-sheet-workspaces-toggle")[0]!.props.onPress());
       expect(field().props.placeholder).toBe("Search projects and workspaces");
       expect(chips().map((chip) => chip.replace(/\d+$/, ""))).toEqual(["tasks-board", "idle-branch"]);
@@ -5820,6 +6399,31 @@ describe("Tasks sidebar entry", () => {
     expect(textOf(row)).toBe("132");
   });
 
+  it("updates the hover hint for each visible sidebar count", () => {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = "web";
+    host.settings = { ...DEFAULT_TASKS_SETTINGS, sidebar: { count: "all" } };
+    const card = (data as unknown as { __handle: { lanes: { running: { cards: TaskCard[] } } } }).__handle.lanes.running.cards[0]!;
+    host.counts = { running: 3, needsInput: 1, review: 2, done: 0, hidden: [card] };
+    const titles = new Map<string, string>();
+    const props = { theme, host: { id: "host-1", label: "Local" }, layout: { compact: false, platform: "web" as const }, currentScreen: null, openScreen: vi.fn(), openPopover: vi.fn() };
+    act(() => {
+      renderer = TestRenderer.create(React.createElement(TasksSidebarEntry, props), {
+        createNodeMock: (element) => {
+          const id = (element.props as { testID?: string }).testID;
+          return id === "sidebar-counts-area" || id?.startsWith("sidebar-count-") ? { setAttribute: (_name: string, value: string) => titles.set(id, value) } : null;
+        },
+      });
+    });
+    expect(titles.get("sidebar-count-needs_input")).toBe("1 need input");
+    expect(titles.get("sidebar-count-running")).toBe("3 running");
+    expect(titles.get("sidebar-count-review")).toBe("2 to review");
+    expect(titles.get("sidebar-counts-area")).toBe("1 hidden task, 1 need input, 3 running, 2 to review");
+    host.counts = { running: 4, needsInput: 1, review: 2, done: 0 };
+    act(() => renderer!.update(React.createElement(TasksSidebarEntry, props)));
+    expect(titles.get("sidebar-count-running")).toBe("4 running");
+    expect(titles.get("sidebar-counts-area")).toBe("1 need input, 4 running, 2 to review");
+  });
+
   it("hides a zero count and draws nothing when all are zero", () => {
     host.counts = { running: 0, needsInput: 2, review: 0, done: 0 };
     const row = entry(null);
@@ -5831,6 +6435,14 @@ describe("Tasks sidebar entry", () => {
     host.counts = { running: 0, needsInput: 0, review: 0, done: 1 };
     act(() => renderer!.unmount());
     expect(textOf(entry(null))).toBe("");
+  });
+
+  it.each([["all", true], ["input-only", false], ["none", false]] as const)("shows hidden running tasks only for the all indicator (%s)", (count, visible) => {
+    const card = (data as unknown as { __handle: { lanes: { running: { cards: TaskCard[] } } } }).__handle.lanes.running.cards[0]!;
+    host.settings = { ...DEFAULT_TASKS_SETTINGS, sidebar: { count } };
+    host.counts = { needsInput: 0, running: 0, review: 0, done: 0, hidden: [card] };
+    const row = entry(null);
+    expect(row.findAll((node) => node.props.testID === "hidden-tasks-count" && (node.type as unknown) === "Pressable")).toHaveLength(visible ? 1 : 0);
   });
 
   it("counts with the board's filters and follows them as the board changes them", () => {
@@ -5873,5 +6485,147 @@ describe("Tasks Command Center item", () => {
     const openScreen = vi.fn();
     items[0]!.onSelect({ context: "global", openScreen });
     expect(openScreen).toHaveBeenCalledWith({ screenId: "tasks", params: { q: "ring" } });
+  });
+});
+
+describe("Tasks board, new tasks", () => {
+  const old = new Date(Date.parse("2026-10-20T12:00:00Z")).toISOString();
+  const running = (id: string, createdAt: string) => makeAgent({ id, title: `Task ${id}`, workspaceId: "ws", status: "running", createdAt, updatedAt: createdAt, lastUserMessageAt: createdAt });
+  const review = (id: string) => makeAgent({ id, title: `Task ${id}`, workspaceId: "ws", status: "idle", requiresAttention: true, attentionReason: "finished", createdAt: old, updatedAt: old, lastUserMessageAt: old });
+
+  /** The list drawing `lane`'s cards: the phone's page, or the desktop lane. */
+  function list(lane: string): ReactTestInstance {
+    return renderer!.root.find((node) => (node.type as unknown) === "FlatList" && Array.isArray(node.props.data) && (node.props.data as TaskCard[]).some((card) => card.lane === lane) && (hostsById(`phone-lane-${lane}`).length === 0 || hostsById(`phone-lane-${lane}`)[0]!.findAll((inner) => inner === node).length > 0));
+  }
+  /** The list reports which of its cards are on screen, as `VirtualizedList` does. */
+  function onScreen(lane: string, ids: string[]) {
+    const target = list(lane);
+    const data = target.props.data as TaskCard[];
+    const pairs = target.props.viewabilityConfigCallbackPairs as { onViewableItemsChanged(info: unknown): void }[];
+    act(() => pairs[0]!.onViewableItemsChanged({ viewableItems: ids.map((id) => ({ key: id, item: null, index: data.findIndex((card) => card.id === id), isViewable: true })), changed: [] }));
+  }
+  // Its outline layer is drawn from the start; breathing is the store's flash for it.
+  const outlined = (id: string) => hostsById(`card-new-${id}`).length > 0 && newCardStore("host-1").flash(id).key !== 0;
+
+  async function mount(compact: boolean, os: string, extra: ReturnType<typeof makeAgent>[] = []) {
+    (globalThis as { __rnMockOS?: string }).__rnMockOS = os;
+    const scrollToIndex = vi.fn();
+    const fake = createFakePaseo({ agents: [running("a", old), running("b", old), review("c"), ...extra] });
+    host.liveTasks = fake.paseo;
+    await act(async () => { renderer = TestRenderer.create(screen(compact), { createNodeMock: (element) => element.type === "FlatList" ? { scrollToIndex, scrollToOffset: vi.fn() } : null }); });
+    layOut(compact ? 390 : 2400);
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    const push = async (agent: ReturnType<typeof makeAgent>, wait = 0) => {
+      await act(async () => { fake.pushAgentSnapshot(agent); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(wait); });
+    };
+    /** Past the moment a new card's lane starts saying so. */
+    const announce = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(ANNOUNCE_AFTER_MS); }); };
+    return { fake, push, announce, scrollToIndex };
+  }
+
+  it.each(["ios", "web"])("%s marks the tab of a lane not shown, and outlines the new card once its lane is", async (os) => {
+    const { push, announce } = await mount(true, os);
+    act(() => hostsById("phone-stat-review")[0]!.props.onPress());
+    await push(running("fresh", new Date().toISOString()));
+    // Not at once: a card the user looks at is reported on screen a few frames after it came.
+    expect(hostsById("phone-new-dot-running")).toHaveLength(0);
+    await announce();
+    expect(hostsById("phone-new-dot-running")).toHaveLength(1);
+    expect(hostsById("phone-new-dot-review")).toHaveLength(0);
+    expect(hostsById("phone-new-pill-review").length).toBe(0);
+    if (os !== "web") {
+      // The page beside the one shown sees its cards, but nobody looks at it.
+      onScreen("running", ["a", "b", "fresh"]);
+      expect(hostsById("phone-new-dot-running")).toHaveLength(1);
+      expect(outlined("fresh")).toBe(false);
+    }
+    act(() => hostsById("phone-stat-running")[0]!.props.onPress());
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    if (os === "web") onScreen("running", ["a", "b", "fresh"]);
+    expect(hostsById("phone-new-dot-running")).toHaveLength(0);
+    expect(outlined("fresh")).toBe(true);
+    expect(outlined("a")).toBe(false);
+    // It breathes twice and goes; scrolled away and back, it does not breathe again.
+    await act(async () => { await vi.advanceTimersByTimeAsync(FLASH_AFTER_SCROLL_MS + 2800 + 50); });
+    expect(outlined("fresh")).toBe(false);
+    onScreen("running", ["a"]);
+    onScreen("running", ["a", "b", "fresh"]);
+    expect(outlined("fresh")).toBe(false);
+  });
+
+  it.each(["ios", "web"])("%s offers a pill for a new card below the screen, and scrolls to it", async (os) => {
+    const { push, announce, scrollToIndex } = await mount(true, os);
+    act(() => hostsById("phone-stat-running")[0]!.props.onPress());
+    onScreen("running", ["a", "b"]);
+    await push(running("fresh", new Date().toISOString()));
+    await announce();
+    // The running lane keeps its oldest task first: the new one is last, out of view.
+    expect((list("running").props.data as TaskCard[]).map((card) => card.id)).toEqual(["a", "b", "fresh"]);
+    const pill = () => hostsById("phone-new-pill-running");
+    expect(pill()).toHaveLength(1);
+    expect(pill()[0]!.props.accessibilityLabel).toBe("1 new task");
+    expect(outlined("fresh")).toBe(false);
+    act(() => pill()[0]!.props.onPress());
+    expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 2, viewPosition: 0.5, animated: true });
+    // It sinks away, then goes.
+    vi.spyOn(Animated, "timing").mockImplementation(() => ({ start: (done?: (result: { finished: boolean }) => void) => done?.({ finished: true }), stop() {}, reset() {} }) as never);
+    onScreen("running", ["b", "fresh"]);
+    expect(outlined("fresh")).toBe(true);
+    expect(pill()).toHaveLength(0);
+  });
+
+  it("outlines a new card seen as it comes in once its entrance settles, and offers no pill for it", async () => {
+    const { push } = await mount(true, "ios");
+    act(() => hostsById("phone-stat-running")[0]!.props.onPress());
+    onScreen("running", ["a", "b"]);
+    await push(running("fresh", new Date().toISOString()));
+    // The list reports the new row a little after it came.
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    onScreen("running", ["a", "b", "fresh"]);
+    expect(outlined("fresh")).toBe(true);
+    const outline = hostsById("card-new-fresh")[0]!;
+    expect(StyleSheet.flatten(outline.props.style)).toMatchObject({ borderWidth: 1.5, borderRadius: 8 });
+    expect(FLASH_AFTER_ENTER_MS).toBeGreaterThan(FLASH_AFTER_SCROLL_MS);
+    await act(async () => { await vi.advanceTimersByTimeAsync(ANNOUNCE_AFTER_MS); });
+    expect(hostsById("phone-new-pill-running")).toHaveLength(0);
+  });
+
+  it("does not count a task that was created a while ago (unarchived, paged in), or the tasks it starts with", async () => {
+    const { push } = await mount(true, "ios", [running("startup", new Date().toISOString())]);
+    act(() => hostsById("phone-stat-review")[0]!.props.onPress());
+    expect(hostsById("phone-new-dot-running")).toHaveLength(0);
+    await push(running("returning", new Date(Date.now() - 5 * 60_000).toISOString()), ANNOUNCE_AFTER_MS);
+    expect(hostsById("phone-new-dot-running")).toHaveLength(0);
+    await push(running("fresh", new Date().toISOString()), ANNOUNCE_AFTER_MS);
+    expect(hostsById("phone-new-dot-running")).toHaveLength(1);
+  });
+
+  it("forgets a new task that leaves its lane before it was seen", async () => {
+    const { push } = await mount(true, "ios");
+    act(() => hostsById("phone-stat-review")[0]!.props.onPress());
+    const now = new Date().toISOString();
+    await push(running("fresh", now), ANNOUNCE_AFTER_MS);
+    expect(hostsById("phone-new-dot-running")).toHaveLength(1);
+    await push(makeAgent({ id: "fresh", title: "Task fresh", workspaceId: "ws", status: "idle", requiresAttention: true, attentionReason: "finished", createdAt: now, updatedAt: new Date(Date.now() + 1000).toISOString(), lastUserMessageAt: now }));
+    expect(hostsById("phone-new-dot-running")).toHaveLength(0);
+    expect(hostsById("phone-new-dot-review")).toHaveLength(0);
+  });
+
+  it("on the desktop floats a pill over the lane, and marks a collapsed lane", async () => {
+    const { push, scrollToIndex } = await mount(false, "web");
+    onScreen("running", ["a", "b"]);
+    await push(running("fresh", new Date().toISOString()), ANNOUNCE_AFTER_MS);
+    const pill = () => hostsById("lane-new-pill-running");
+    expect(pill()).toHaveLength(1);
+    act(() => pill()[0]!.props.onPress());
+    expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 2, viewPosition: 0.5, animated: true });
+    onScreen("running", ["a", "b", "fresh"]);
+    expect(outlined("fresh")).toBe(true);
+    await push(running("later", new Date().toISOString()), ANNOUNCE_AFTER_MS);
+    act(() => hostsById("lane-header-running")[0]!.findAll((node) => (node.type as unknown) === "Pressable" && node.props.accessibilityLabel === BOARD_STRINGS.en.collapse)[0]!.props.onPress());
+    layOut(2400);
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(hostsById("lane-new-dot-running")).toHaveLength(1);
   });
 });

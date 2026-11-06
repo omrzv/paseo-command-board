@@ -529,7 +529,8 @@ Oh My Pi 的 `hub` 工具和它的 GitHub 设备调用按工具名识别，有�
 - 网页和桌面上双击单元格可选中其中的文字；iOS 和 Android 上对同一单元格连续点按两次即可选中。要选中一片单元格，按住某个单元格再横向、纵向拖动；用鼠标时，从一个单元格直接拖进另一个也可以。网页和桌面上，按住 Command（Windows 和 Linux 上是 Ctrl）再点按或拖过单元格，可以再加一片选区而不丢掉已有的；这时每片选区都沿用最后画的那片的列。松手后弹出菜单：选中一个单元格复制它的文字，选中多个则按表格顺序复制只含所选行列的 Markdown 表格，并带上这几列的表头。表格角落菜单始终提供「复制选中」，Paseo 允许插件向输入框写入文字时还会显示「添加到对话」。
 - 每个已完成轮次会在最终回复下方显示独立信息栏，提供复制和时间；有数据时还会显示服务商标识、模型、思考等级和本轮实际耗时。悬停或长按信息栏可打开「轮次详情」表格：agent、模型、思考等级、开始和结束时间、耗时，以及输入、缓存和输出 token。点按模型名称可复制，并会显示提示；后续轮次运行时，已完成轮次的信息栏仍会保留。关闭「回复使用插件 Markdown」可恢复 Paseo 完整的信息栏和 Fork 操作。
 - 一段回复里的多张本地图片都会画出来。
-- 关闭「回复使用插件 Markdown」即可把回复交回 Paseo，由它绘制 mermaid 图表、宿主图片和文件链接。
+- 完整的 `mermaid` 代码块由 Paseo 绘图，沿用宿主的源码查看和全屏操作；围栏尚未闭合且回复仍在生成时显示源码。
+- 需要宿主图片和文件链接时，关闭「回复使用插件 Markdown」。
 
 | 表格复制菜单 | 选中单元格后的操作 |
 | --- | --- |
@@ -665,11 +666,14 @@ Paseo 仍会绘制原生权限提示，并负责允许和拒绝操作。agent �
 
 **设置 → 插件 → Better Paseo**，页面 **设置**。页面分「聊天展示」「任务看板」和「版本」三个标签；前两个标签顶部有任务看板开关。在聊天展示标签里，一段用时间线组件绘制的示例对话会实时跟随每一项修改：宽窗口下显示在选项旁边，其他情况显示在选项上方；其中 Read 行的悬停预览常驻展开。在网页和桌面上，预览标题栏的「桌面端 / 移动端」切换可以按 iOS 样式、手机宽度绘制同一段对话，并使用你选的行内代码颜色。父选项关闭时，子选项变灰；某个平台用不上的选项在该平台上隐藏；「恢复全部默认设置」需要再点一次确认。
 
+**通用 → 启用 Better Paseo 聊天** 默认开启。关闭后整个聊天交给 Paseo 和其他插件，并隐藏工具调用、间距、消息和悬停预览分组。Tasks 看板不受此设置影响。
+
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/RoundRedDot/better-paseo/releases/download/media-assets/media--docs--images--settings-zh-dark.png"><img alt="设置页与实时预览" src="https://github.com/RoundRedDot/better-paseo/releases/download/media-assets/media--docs--images--settings-zh-light.png"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://github.com/RoundRedDot/better-paseo/releases/download/media-assets/media--docs--images--settings-tools-zh-dark.png"><img alt="块字号设置与实时预览" src="https://github.com/RoundRedDot/better-paseo/releases/download/media-assets/media--docs--images--settings-tools-zh-light.png"></picture>
 
 | 分组 | 设置 | 默认 | 作用 |
 | --- | --- | --- | --- |
+| 通用 | 启用 Better Paseo 聊天 | 开 | 使用本插件绘制工具调用、思考、待办清单、提示、上下文压缩行、提问和回复。关闭后整个聊天交给 Paseo，其 Summary 工具调用显示模式可以折叠工具调用。 |
 | 通用 | 语言 | 跟随 Paseo | 设置页、Tasks 看板和时间线上插件自己的文字使用英文或简体中文。跟随 Paseo 时使用 Paseo 的语言；Paseo 跟随系统时使用设备语言。 |
 | 外观 | 强调色 | 主题 | 跟随 Paseo 主题，或选翠绿、紫罗兰、琥珀、玫瑰。只替换强调色。 |
 | 外观 | 界面字体 | 跟随 Paseo | Paseo 的界面字体、Inter（仅网页，由 daemon 下发）或系统字体。 |
@@ -684,7 +688,7 @@ Paseo 仍会绘制原生权限提示，并负责允许和拒绝操作。agent �
 | 间距 | 紧凑行距 | 开 | 插件行后面还有一行时，下方间距从 16pt 缩到 4pt；Paseo 已经把插件行紧挨着排好时，不再额外收紧。行间重叠时请关闭。 |
 | 间距 | 紧凑回复间距 | 开 | 已完成的回复后紧跟插件行（包括待办行）时，把间距从 16pt 缩到 4pt。重叠时请关闭。 |
 | 消息 | 增强提问气泡 | 关 | 复制按钮常驻，并显示最新一轮的 token 用量；能读取的粘贴图片会一并显示，其他附件仍交给 Paseo。切换后已有的提问也会更新。 |
-| 消息 | 回复使用插件 Markdown | 开 | 关闭后回复交给 Paseo，恢复宿主完整信息栏，并可用 mermaid、宿主图片和 Paseo 的文件链接。 |
+| 消息 | 回复使用插件 Markdown | 开 | 关闭后回复交给 Paseo，恢复宿主完整信息栏，并可用宿主图片和 Paseo 的文件链接；开启时也支持 Mermaid 图表。 |
 | 消息 | Markdown 样式 | 文档 | 文档、紧凑或终端（正文使用代码字体）。 |
 | 消息 | 选中文字工具栏 | 开 | 网页和桌面：选中文字后显示「复制」和「添加到对话」；滚动时工具栏收起。 |
 | 悬停预览 | 悬停预览 | 开 | 桌面悬停折叠行或路径时预览内容；关闭区块详情时，在触控设备上长按折叠行可预览。 |
@@ -809,7 +813,7 @@ Better Paseo 需要 Paseo 0.14.0 或更新版本。任务看板使用该版本�
 | 现象 | 处理 |
 | --- | --- |
 | 行与行重叠，或回复盖住了下一行 | 关闭「紧凑行距」或「紧凑回复间距」。 |
-| 回复里需要 mermaid 图、宿主图片或 Paseo 的文件链接 | 关闭「回复使用插件 Markdown」。 |
+| 回复里需要宿主图片或 Paseo 的文件链接 | 关闭「回复使用插件 Markdown」。 |
 | 手机上选中表格单元格后没有「添加到对话」 | Paseo 暂不允许插件向输入框写入文字；「复制选中」始终可用。 |
 | 含附件的提问需要由 Paseo 绘制 | 关闭「增强提问气泡」。插件无法呈现的附件会自动交给 Paseo。 |
 | Ctrl/Cmd+F 搜不到较早的消息 | 先往上滚动加载，或按上文把回复交回 Paseo。 |

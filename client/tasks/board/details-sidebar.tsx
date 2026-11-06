@@ -8,7 +8,8 @@ import { tipProps } from "../cards/card-hints";
 import { TaskText as Text, HOST_FONT as F, HOST_LINE, useTasksFontScale, taskControlHeight } from "../typography";
 import { useHover } from "../../ui/use-hover";
 import { useReducedMotion } from "../../ui/use-reduced-motion";
-import { scaleStyle, surfaceLift } from "../cards/surface-lift";
+import { liftStyle, scaleStyle, surfaceLift } from "../cards/surface-lift";
+import { usePressCue } from "../cards/action-pressable";
 import { BrandMark, DETAIL_CARD, DetailCard, detailGutter, detailScrollProps, ProjectIcon, StatusIcon, TagMark, TaskDetailCards, taskTokens, tildePath, type DetailNotice, type TaskTokens } from "../cards";
 import { LANE_STATUS, turnRunning, type LaneId, type TaskCard } from "../model";
 import { activeStopChildren } from "../actions/stop-targets";
@@ -74,7 +75,7 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
 
   let notice: DetailNotice | null = null;
   if (card && !shown) {
-    notice = { icon: "EyeOff", text: strings.hidden, action: { label: board.strings.clearFilters, onPress: () => board.setParams(clearedParams) } };
+    notice = { icon: "EyeOff", text: strings.hidden, action: { label: board.strings.clearFilters, onPress: () => board.setParams((params) => ({ ...clearedParams(params), hideSubtasks: false })) } };
   }
   const backId = selection.back[selection.back.length - 1];
   const backCard = backId ? board.cardById(backId) : undefined;
@@ -96,6 +97,7 @@ function DetailsSidebarView(props: DetailsSidebarProps) {
         touch: props.touch,
         clock: board.clock,
         onClose: () => dispatch({ type: "clear" }),
+        onMenu: (point: { x: number; y: number }) => setMenu({ id: card.id, point }),
         back: backId ? { title: backCard?.title ?? board.strings.back, onPress: () => dispatch({ type: "back" }) } : null,
         notice,
         onOpen: board.callbacks.onOpen,
@@ -310,6 +312,8 @@ function StatCell(props: {
   const hideLabel = headingWidth !== null && labelSize?.key === labelKey && labelSize.width + 13 + 5 > headingWidth + 0.5;
   const { hovered, hoverProps } = useHover();
   const reduced = useReducedMotion();
+  const press = usePressCue(hovered);
+  const lift = surfaceLift(hovered, press.pressed, reduced, "capsule", press.input);
   const alert = props.lane === "needs_input" && (props.count ?? 0) > 0;
   const countStyle = { fontSize: props.countSize, lineHeight: HOST_LINE.base, fontWeight: "600" as const, color: alert ? tokens.warning : tokens.foreground, fontVariant: ["tabular-nums" as const] };
   return (
@@ -317,11 +321,16 @@ function StatCell(props: {
       accessibilityRole="button"
       accessibilityLabel={`${props.label} ${props.count ?? ""}`}
       {...tipProps(props.label)}
-      onPress={props.onPress}
+      onPress={press.guard(props.onPress)}
+      onPressIn={press.onPressIn}
+      onPressOut={press.onPressOut}
+      onTouchStart={press.onTouchStart}
+      onTouchMove={press.onTouchMove}
+      onTouchEnd={press.onTouchEnd}
+      onTouchCancel={press.onTouchCancel}
       {...hoverProps}
       testID={`sidebar-stat-${props.lane}`}
-      style={({ pressed }) => {
-        const lift = surfaceLift(hovered, pressed, reduced);
+      style={() => {
         return {
           flex: 1,
           minWidth: 0,
@@ -331,9 +340,9 @@ function StatCell(props: {
           paddingBottom: props.touch ? 2 : 6,
           borderRadius: 8,
           borderWidth: StyleSheet.hairlineWidth,
-          borderColor: alert ? tokens.warning : "transparent",
           backgroundColor: "transparent",
-          boxShadow: lift.shadow ? tokens.card.buttonShadowHover : undefined,
+          // Transparent at rest; the needs-input alert's warning line keeps its hue.
+          ...liftStyle(tokens, lift, { border: alert ? tokens.warning : "transparent", hued: alert }),
           ...scaleStyle(lift.scale),
           gap: 2,
         };
@@ -572,7 +581,6 @@ function Segment(props: {
   }, [id, onFit, labelKey, width, fullWidth]);
   const labelStyle = { fontSize: F.base, fontWeight: "500" as const, color: props.on ? tokens.foreground : tokens.foregroundMuted };
   const { hovered, hoverProps } = useHover();
-  const reduced = useReducedMotion();
   return (
     <Pressable
       accessibilityRole="tab"
@@ -583,7 +591,6 @@ function Segment(props: {
       {...hoverProps}
       testID={`sidebar-group-tab-${props.icon}`}
       style={({ pressed }) => {
-        const lift = surfaceLift(hovered, pressed, reduced);
         return {
           // Share the row equally, regardless of label length or selection.
           flexBasis: 0,
@@ -594,14 +601,12 @@ function Segment(props: {
           borderRadius: 999,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: props.on ? tokens.surface2 : tokens.card.pillBorder,
-          backgroundColor: props.on ? tokens.surface2 : "transparent",
-          boxShadow: lift.shadow ? tokens.card.buttonShadowHover : undefined,
+          backgroundColor: props.on ? tokens.surface2 : hovered || pressed ? tokens.card.controlHover : "transparent",
           flexDirection: "row" as const,
           alignItems: "center" as const,
           justifyContent: "center" as const,
           gap: 4,
           paddingHorizontal: 6,
-          ...scaleStyle(lift.scale),
         };
       }}
     >
@@ -634,9 +639,8 @@ function GroupRowView(props: { row: GroupRow; tokens: TaskTokens; touch: boolean
   const { row, tokens } = props;
   const scale = useTasksFontScale();
   const { hovered, hoverProps } = useHover();
-  const reduced = useReducedMotion();
-  // The rows sit on the group card. A row fills only while it is on.
-  const fill = row.on ? tokens.surface2 : tokens.card.background;
+  // The tag hole follows the row background on hover.
+  const fill = row.on ? tokens.surface2 : hovered ? tokens.card.controlHover : tokens.card.background;
   return (
     <Pressable
       accessibilityRole="checkbox"
@@ -646,7 +650,6 @@ function GroupRowView(props: { row: GroupRow; tokens: TaskTokens; touch: boolean
       onPress={row.toggle}
       {...hoverProps}
       style={({ pressed }) => {
-        const lift = surfaceLift(hovered, pressed, reduced);
         return {
           height: taskControlHeight(row.detail ? (props.touch ? 56 : 48) : (props.touch ? 44 : 36), scale),
           marginVertical: 2,
@@ -658,9 +661,7 @@ function GroupRowView(props: { row: GroupRow; tokens: TaskTokens; touch: boolean
           flexDirection: "row",
           alignItems: "center",
           gap: 10,
-          backgroundColor: row.on ? tokens.surface2 : "transparent",
-          boxShadow: lift.shadow ? tokens.card.buttonShadowHover : undefined,
-          ...scaleStyle(lift.scale),
+          backgroundColor: row.on ? tokens.surface2 : hovered || pressed ? tokens.card.controlHover : "transparent",
         };
       }}
     >

@@ -160,6 +160,8 @@ Better Paseo 的设置里开启看板后，侧边栏顶部（新建工作区、�
 
 ## 插件设置
 
+任务标签页的「快速打开任务面板」默认使用 `Command + Shift + Y`（Windows/Linux 为 `Ctrl + Shift + Y`）。点击「修改快捷键」后按下包含 Command、Ctrl 或 Option/Alt 的组合键即可保存；`Esc` 或「取消」放弃录入，也可清除或单独恢复默认。快捷键仅保存在当前设备，不写回主机设置；卡片与看板的恢复操作不改变它。桌面/Web 客户端有焦点、任务看板启用时生效；录入期间暂停打开动作。多主机时沿用侧边栏当前或最近选择的任务入口，只打开一次，并保留该主机上次的筛选条件。请选择未被宿主、浏览器或系统占用的组合键；宿主快捷键设置暂不包含插件的绑定，已占用的组合键需要先在宿主解除。原生手机端不显示此设置。
+
 卡片上显示哪些信息由插件设置决定。入口是 Better Paseo 唯一的设置页（Settings → Plugins → Better Paseo，`addSettingsScreen` id `chat-presentation`），页里分「聊天显示」和「任务看板」两个标签页；聊天标签页顶部也有看板的开关（看板关闭时附带预览），以及链到任务看板标签页的「看板选项与预览」。最初方案里单独的 Tasks 设置页已经并入这里。设置用 `defineSettings`（id `tasks`）定义，由插件服务端 `registerSettings` 注册，按 host 保存（SDK 只支持 `scope: "host"`），显示子任务、显示归档泳道、显示全部和泳道宽度使用设备本地存储：Web/Electron 用 localStorage，iOS/Android 用宿主 AsyncStorage。首次升级时沿用旧共享值一次，之后各设备独立保存；看板、筛选面板和设置页读取同一份本地值。其余选项仍按 host 同步。旧 schema 中的四个字段只保留作迁移种子，设备修改不会写回它们。
 
 任务看板标签页顶部是看板的实时预览：用示例 agent 画出四列，打开「显示已归档泳道」时是五列（窄页面上是一列加泳道切换），改任何开关预览立即变化。宽页面上预览右上角有「桌面端 / 移动端」切换（与聊天标签页的效果预览一致）：移动端在 390pt 宽的手机框里按手机的样子画看板，即泳道切换加 `mobile.compactCards` 卡片；手机上预览本来就是手机样子，不显示这个切换。预览不读真实数据，也不发请求。
@@ -227,6 +229,7 @@ Better Paseo 的设置里开启看板后，侧边栏顶部（新建工作区、�
 - 只展示直接子任务，孙任务在子任务自己的卡片里展开。
 - 父 agent 已归档时，子卡片的父任务链接保留父任务标题（没有标题时写「父任务」），旁边带一个归档小标签：父任务本身已归档写「已归档」，所在工作区或项目已归档写「工作区已归档」；卡片的元信息行和详情的父任务行都有。不在看板上的父任务在带来子任务的那一批之后用 `agents.ref(id).refresh()` 补取一次。
 - 子 agent 被 detach 后 label 清空，订阅推送到达后关联自动消失。
+- 父任务归档时，Paseo 不会归档跨 workspace 的子任务和还开着 tab 的子任务，而是把它们 detach，清掉 `paseo.parent-agent-id`，和手动 detach 一样不留痕迹。插件服务端用一个订阅跟着所有未归档的 agent（含后台），在内存里记下看到的父子关系；父任务的 `agent.archived` hook 到达或父任务从列表消失时，立即读一次它的子任务，之后在 2、10、30 秒再读，因为 Paseo 0.15 detach 已关闭的子任务时不推送更新。手动 detach 和归档引起的 detach 走 Paseo 同一段代码，推给其他客户端的 `agent_update` 完全一样，0.15 也没有 detach hook，所以插件只能按时序推断，不能证实。只有同一段连续订阅里同时满足三条才推断为出处：归档前已看到子任务挂在这个父任务下、父任务确实已归档、子任务去掉 label 时的 `updatedAt` 不早于归档时间。以下手动 detach 会被误判为归档引起：级联还没轮到这个子任务时手动 detach；级联中途因某个子任务归档失败而停下，剩下的子任务仍挂在已归档的父任务下，之后被手动 detach；通过 metadata 把 `paseo.parent-agent-id` 改成空串。出处写进 `tasks-parent-origins.json`，文件读不了或格式不对时 RPC 直接报错、不会被覆盖，写盘失败时这条出处不生效并记进插件日志，由 RPC `tasks.parent-origins` 给看板，和 provider subagent 一起读（`server/tasks/parent-origins.ts`）。看板只用它在子卡片和详情里显示「↳ 父任务标题」，旁边的小标签总以「推断」开头（英文 Inferred），不说归档就是原因：父任务仍归档时是「推断 · 已归档」或「推断 · 工作区已归档」，带归档图标；父任务恢复或读不到时只写「推断」，换成 Info 图标；详情行的读屏文字也带上这个标签。这只是历史出处，不建立父子关系：父卡片不列这个子任务，不按它算「等待子任务」，停止父任务不带上它，「显示子任务」关闭时也不折叠它，卡片右上角也没有子任务标记。手动 detach、归档后又被恢复再手动 detach 的子任务、插件重启或订阅中断期间发生的 detach、读不到父任务（比如在别的 host）都不记录；子任务重新有了活跃父任务时删掉出处。功能上线前已经丢失父任务的子任务没有出处可显示。
 
 provider 内部的 subagent（Claude Code 的 Agent 工具、Codex 和 Pi 自己派出的）不是 Paseo agent：没有 tab，也没有 `paseo.parent-agent-id` label，`PaseoApi` 列不出来。插件服务端用自己的 daemon 连接（`connectHostDaemon`）先读一次各 agent 的 provider subagent，之后跟随 daemon 的更新，通过 RPC `tasks.subagents` 交给看板（`server/tasks/provider-subagents.ts`）。看板只显示运行中和失败的：
 

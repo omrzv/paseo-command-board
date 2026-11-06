@@ -32,6 +32,10 @@ const en = {
   total: (count: number) => `${count} ${count === 1 ? "task" : "tasks"}`,
   /** `total` without its number, for a count that rolls on its own. */
   totalUnit: (count: number): string => (count === 1 ? "task" : "tasks"),
+  /** A lane's pill for new tasks out of view; it scrolls to the first. */
+  newTasks: (count: number) => `${count} new ${count === 1 ? "task" : "tasks"}`,
+  /** The phone tab's and the collapsed lane's dot. */
+  newTasksIn: (lane: string) => `New tasks in ${lane}`,
   search: "Search tasks",
   fullConversationSearch: "Full search",
   fullConversationShort: "Full",
@@ -147,7 +151,8 @@ const en = {
   emptyGroups: {
     /** The round switch's name, in the filter bar and the phone and narrow board headers. */
     row: "Show all",
-    hide: "Don't show all",
+    show: "Show empty groups",
+    hide: "Hide empty groups",
     sheetLabel: (on: boolean): string => (on ? "Show all" : "Show groups with tasks"),
     hint: (on: boolean): string => (on ? "Includes groups with no tasks on the board" : "Hides groups with no tasks on the board"),
     saveFailed: "Couldn't save the empty groups setting",
@@ -234,6 +239,8 @@ const zh: typeof en = {
   boardEmptyHint: "在任一工作区启动任务后，它会按状态出现在这里",
   windows: { "24h": "24 小时", "7d": "7 天", all: "全部" },
   total: (count) => `${count} 个任务`,
+  newTasks: (count) => `${count} 个新任务`,
+  newTasksIn: (lane) => `${lane}有新任务`,
   totalUnit: () => "个任务",
   search: "搜索任务",
   fullConversationSearch: "全文搜索",
@@ -334,7 +341,8 @@ const zh: typeof en = {
   },
   emptyGroups: {
     row: "显示全部",
-    hide: "不显示全部",
+    show: "显示空分组",
+    hide: "隐藏空分组",
     sheetLabel: (on) => (on ? "显示全部" : "仅显示有任务的分组"),
     hint: (on) => (on ? "包含看板上没有任务的分组" : "隐藏看板上没有任务的分组"),
     saveFailed: "数量为 0 的分组设置没有保存成功",

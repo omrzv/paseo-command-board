@@ -127,7 +127,7 @@ describe("tasks stop marks on the server", () => {
       before() { return () => {}; },
       handle(contract: { name: string }, handler: (input: unknown) => Promise<unknown>) { handlers.set(contract.name, handler); },
     } as unknown as PluginServerContext;
-    registerTasksServer(server, createStopMarks(path, now), undefined, undefined, createStopMarks(readsPath(), now), undefined, createStopMarks(join(dir, "tasks-reviews.json"), now));
+    registerTasksServer(server, createStopMarks(path, now), undefined, undefined, createStopMarks(readsPath(), now), undefined, undefined, createStopMarks(join(dir, "tasks-reviews.json"), now));
     return {
       stopped: async () => ((await handlers.get("tasks.stopped")!({})) as { stops: Array<{ agentId: string }> }).stops.map((stop) => stop.agentId),
       reads: async () => ((await handlers.get("tasks.reads")!({})) as { reads: Array<{ agentId: string }> }).reads.map((read) => read.agentId),

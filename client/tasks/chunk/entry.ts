@@ -1,8 +1,8 @@
 import { insightsGetRpc } from "../../../shared/insights-rpc";
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { lastTurnsRpc } from "../../../shared/turn-usage-rpc";
-import { tasksLabelsRpc, tasksProjectIconsRpc, tasksReadsRpc, tasksSessionTokensRpc, tasksSubagentTimelineRpc, tasksSubagentsRpc } from "../../../shared/tasks-rpc";
-import { setInsightsLoader, setLabelDefinitionsLoader, setLastTurnLoader, setProjectIconsLoader, setReadMarksLoader, setSubagentLoader } from "../data";
+import { tasksLabelsRpc, tasksParentOriginsRpc, tasksProjectIconsRpc, tasksReadsRpc, tasksSessionTokensRpc, tasksSubagentTimelineRpc, tasksSubagentsRpc } from "../../../shared/tasks-rpc";
+import { setInsightsLoader, setLabelDefinitionsLoader, setLastTurnLoader, setParentOriginsLoader, setProjectIconsLoader, setReadMarksLoader, setSubagentLoader } from "../data";
 import { setSessionTokensLoader } from "../data/session-tokens";
 import { setSubagentTimelineLoader } from "../data/subagent-timeline";
 import { conversationSearchRpc } from "../../../shared/conversation-search";
@@ -33,6 +33,8 @@ export function startTasksData(client: PluginClientContext): () => void {
   setReadMarksLoader(() => client.rpc(tasksReadsRpc, {}));
   // Short task descriptions and two-sentence summaries the server's model wrote when turns completed.
   setInsightsLoader((agentIds, ensure) => client.rpc(insightsGetRpc, { agentIds, ...(ensure?.length ? { ensure } : {}) }).then((result) => result.insights));
+  // The parent whose archive detached a task, which the server infers as it follows the agents.
+  setParentOriginsLoader((since) => client.rpc(tasksParentOriginsRpc, since === undefined ? {} : { since }));
   // Label colors as Paseo's sidebar draws them, for a host whose API lists no label definitions.
   setLabelDefinitionsLoader(() => client.rpc(tasksLabelsRpc, {}).then((result) => result.labels));
   // Project icons as Paseo's sidebar draws them, for a host whose API has no icon call.
@@ -47,6 +49,7 @@ export function startTasksData(client: PluginClientContext): () => void {
     setSubagentLoader(null);
     setReadMarksLoader(null);
     setInsightsLoader(null);
+    setParentOriginsLoader(null);
     setLabelDefinitionsLoader(null);
     setProjectIconsLoader(null);
     setSessionTokensLoader(null);

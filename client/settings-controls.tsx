@@ -187,10 +187,12 @@ export function PlainButton({
 /**
  * A section: a muted label over a card of rows, as Paseo draws its own
  * settings (`SettingsSection`): a grouped list on touch, a bordered surface1
- * card on desktop.
+ * card on desktop. A `hidden` section (its parent option is off) is not
+ * rendered, so neither pointer nor keyboard can reach its controls.
  */
-export function Section({ title, look, children }: { title: string; look: PageLook; children: React.ReactNode }) {
+export function Section({ title, look, children, hidden = false }: { title: string; look: PageLook; children: React.ReactNode; hidden?: boolean }) {
   const { tokens, compact } = look;
+  if (hidden) return null;
   return (
     <View style={styles.section}>
       <Text
@@ -343,7 +345,7 @@ const styles = StyleSheet.create({
   sectionNote: { marginTop: -space.xs },
   tips: { gap: space.sm },
   tip: { flexDirection: "row", flexWrap: "wrap", columnGap: space.md, rowGap: 2 },
-  tipCompact: { flexDirection: "column" },
+  tipCompact: { flexDirection: "column", flexWrap: "nowrap" },
   tipLabel: { width: 92, fontWeight: "500" },
   tipText: { flexGrow: 1, flexShrink: 1, flexBasis: 180, minWidth: 0 },
   group: { borderRadius: radiusV2.card, overflow: "hidden" },
