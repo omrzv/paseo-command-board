@@ -9,6 +9,7 @@ import { SlackColumn } from "./slack-column";
 import { TodoColumn } from "./todo-column";
 import { KeysColumn } from "./keys-column";
 import { TeamColumn } from "./team-column";
+import { sideColumnWidth } from "./side-columns";
 import { TodayStrip } from "./today-strip";
 import { LANE_ORDER, LANE_STATUS, isHistoryLane, type LaneId, type LaneModel, type TaskCard } from "../model";
 import { useReducedMotion } from "../../ui/use-reduced-motion";
@@ -284,8 +285,11 @@ export function DesktopBoard(props: {
   const archivedSwitch = useArchivedSwitch(laneOrder, lanes.archived, laneWidth, board.visible);
   // An outgoing lane still occupies its slot until the complete panel has slid out.
   const layout = boardLaneLayout(boardWidth, archivedSwitch.drawn, collapsedState, board.laneWidth, lanesWidth, laneSizing);
-  const slackWidth = Math.min(340, Math.max(260, layout.laneWidth));
-  const todoWidth = Math.min(320, Math.max(250, layout.laneWidth));
+  // From the window, never from the lanes: the lanes get what these columns leave, so sizing these by the
+  // lanes fed back (narrower lanes, narrower columns, wider lanes…) and the columns shook.
+  const slackWidth = sideColumnWidth(windowWidth, 0.18, 260, 340);
+  const todoWidth = sideColumnWidth(windowWidth, 0.17, 250, 320);
+  const keysWidth = sideColumnWidth(windowWidth, 0.16, 240, 300);
   // A floating panel covers the lanes' right side: the row scrolls far enough for the last lane to come out from under it.
   const coverRoom = floating && !inSheet ? panelWidth + (tabletFloating ? 0 : SIDEBAR.gap) : 0;
 
@@ -752,13 +756,13 @@ export function DesktopBoard(props: {
       <View testID="board-people-block" style={{ minHeight: 0, flexDirection: "column", width: teamFolded ? undefined : slackWidth + todoWidth, borderRightWidth: teamFolded ? 0 : 1, borderRightColor: taskTokens(theme).card.border }}>
         <View style={{ flex: 1, minHeight: 0, flexDirection: "row" }}>
           <SlackColumn theme={theme} width={slackWidth} visible={board.visible} />
-          <TodoColumn theme={theme} width={todoWidth} visible={board.visible} onShown={setTodosShown} paseo={board.paseo} onOpenAgent={callbacks.onOpen} />
+          <TodoColumn theme={theme} width={todoWidth} visible={board.visible} onShown={setTodosShown} paseo={board.paseo} onOpenAgent={callbacks.onOpen} onOpenWorkspace={board.openWorkspace} />
         </View>
         <View style={teamFolded ? undefined : { flex: 1, minHeight: 0 }}>
           <TeamColumn theme={theme} visible={board.visible} folded={teamFolded} onFold={setTeamFolded} />
         </View>
       </View>
-      <KeysColumn theme={theme} width={Math.min(300, Math.max(240, layout.laneWidth))} visible={board.visible} />
+      <KeysColumn theme={theme} width={keysWidth} visible={board.visible} />
       <View
         testID="tasks-board-area"
         style={{ flex: 1, minHeight: 0, flexDirection: "row", overflow: "hidden" }}

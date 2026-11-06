@@ -71,6 +71,8 @@ export interface BoardController {
   tasks: TasksHandle;
   /** The host's client, for what the details read on demand (a task's first prompt). */
   paseo: PaseoApi;
+  /** Opens a workspace's tab in Paseo; undefined on hosts without navigation. */
+  openWorkspace?: (workspaceId: string) => void;
   /** The lanes after the filter bar and search. */
   lanes: Record<LaneId, LaneModel>;
   /** First messages still loading or not covered by this search. Other metadata is searched for every card. */
@@ -456,6 +458,7 @@ export function useBoard(
   const requestProjectIcon = useCallback((projectId: string) => latest.current.tasks.requestProjectIcon(projectId), []);
   const buttonsFor = useCallback((card: TaskCard) => buttonsIn(card, language), [language]);
   const hasNavigation = props.navigation !== undefined;
+  const openWorkspace = useCallback((workspaceId: string) => latest.current.props.navigation?.openWorkspace({ workspaceId }), []);
   const stopAvailable = stop.available;
   const readAvailable = read.available;
   const unarchiveAvailable = unarchive.available;
@@ -530,6 +533,7 @@ export function useBoard(
     filters,
     tasks,
     paseo,
+    openWorkspace: hasNavigation ? openWorkspace : undefined,
     lanes,
     searchStatus: search.status,
     fullConversationSearch,

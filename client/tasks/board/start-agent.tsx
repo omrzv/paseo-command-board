@@ -28,24 +28,26 @@ export function worktreeSlug(name: string): string {
  * notes, links and Slack origin), add more context, and start.
  */
 export function StartAgentDialog(props: {
-  todo: Todo;
+  /** Without one it is "New workspace": the first message is optional, and empty makes the workspace alone. */
+  todo?: Todo;
   paseo: PaseoApi;
   theme: PluginTheme;
   onClose(): void;
-  onStarted(agentId: string): void;
+  onStarted(agentId: string | null, workspaceId: string): void;
 }) {
+  const fromTask = props.todo !== undefined;
   const tokens = taskTokens(props.theme);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [projectKey, setProjectKey] = useState<string | null>(null);
-  const [name, setName] = useState(props.todo.title.slice(0, 60));
+  const [name, setName] = useState(props.todo?.title.slice(0, 60) ?? "");
   const [worktree, setWorktree] = useState(true);
   const [providerId, setProviderId] = useState<string | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
   const [thinkingId, setThinkingId] = useState<string | null>(null);
   const [modeId, setModeId] = useState<string | null>(null);
-  const [message, setMessage] = useState(() => agentPrompt(props.todo, ""));
+  const [message, setMessage] = useState(() => (props.todo ? agentPrompt(props.todo, "") : ""));
   const [extra, setExtra] = useState("");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,10 +101,11 @@ export function StartAgentDialog(props: {
   const provider = providers?.find((entry) => entry.id === providerId) ?? null;
   const model = provider?.models.find((entry) => entry.id === modelId) ?? null;
   const prompt = useMemo(() => (extra.trim() ? `${message.trim()}\n\nAdditional context:\n${extra.trim()}` : message.trim()), [message, extra]);
-  const canStart = !!project && !!provider && !!model && name.trim().length > 0 && prompt.length > 0 && !starting;
+  const withAgent = prompt.length > 0;
+  const canStart = !!project && name.trim().length > 0 && (withAgent ? !!provider && !!model : !fromTask) && !starting;
 
   const start = async () => {
-    if (!canStart || !project || !provider || !model) return;
+    if (!canStart || !project) return;
     setStarting(true);
     setError(null);
     try {
@@ -113,6 +116,10 @@ export function StartAgentDialog(props: {
           ? { kind: "worktree", cwd: project.rootPath, ...(project.projectId ? { projectId: project.projectId } : {}), action: "branch-off", worktreeSlug: worktreeSlug(title) }
           : { kind: "directory", path: project.rootPath, ...(project.projectId ? { projectId: project.projectId } : {}) },
       });
+      if (!withAgent || !provider || !model) {
+        props.onStarted(null, workspace.id);
+        return;
+      }
       const agent = await workspace.agents.create({
         config: {
           provider: `${provider.id}/${model.id}`,
@@ -122,7 +129,7 @@ export function StartAgentDialog(props: {
         prompt,
         title,
       });
-      props.onStarted(agent.id);
+      props.onStarted(agent.id, workspace.id);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
       setStarting(false);
@@ -130,7 +137,7 @@ export function StartAgentDialog(props: {
   };
 
   return (
-    <Modal title="Start an agent from this task" open onOpenChange={(open) => { if (!open) props.onClose(); }}>
+    <Modal title={fromTask ? "Start an agent from this task" : "New workspace"} open onOpenChange={(open) => { if (!open) props.onClose(); }}>
       <Modal.Content contentContainerStyle={{ padding: 16, gap: 14, minWidth: 520 }}>
         <TasksTypography theme={props.theme}>
           <View style={{ gap: 14 }}>
@@ -164,13 +171,13 @@ export function StartAgentDialog(props: {
                     <Chips tokens={tokens} value={modeId} onChange={setModeId} options={provider.modes} />
                   </Field>
                 ) : null}
-                <Field label="First message (from the task)" tokens={tokens}>
-                  <TextInput value={message} onChangeText={setMessage} multiline style={[boxStyle(tokens), { minHeight: 120, maxHeight: 260, textAlignVertical: "top" }, INPUT]} />
+                <Field label={fromTask ? "First message (from the task)" : "First message (optional: leave empty to just open the workspace)"} tokens={tokens}>
+                  <TextInput value={message} onChangeText={setMessage} multiline placeholder={fromTask ? undefined : "What should the agent do?"} placeholderTextColor={tokens.foregroundMuted} style={[boxStyle(tokens), { minHeight: 120, maxHeight: 260, textAlignVertical: "top" }, INPUT]} />
                 </Field>
-                <Field label="More context" tokens={tokens}>
+                {fromTask ? <Field label="More context" tokens={tokens}>
                   <TextInput value={extra} onChangeText={setExtra} multiline placeholder="Anything else the agent should know or do…" placeholderTextColor={tokens.foregroundMuted}
                     style={[boxStyle(tokens), { minHeight: 70, textAlignVertical: "top" }, INPUT]} />
-                </Field>
+                </Field> : null}
               </>
             )}
             {error ? <Text style={{ fontSize: F.sm, color: tokens.danger }}>{error}</Text> : null}
@@ -178,10 +185,10 @@ export function StartAgentDialog(props: {
               <Pressable accessibilityRole="button" onPress={props.onClose} style={{ height: 34, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: tokens.card.border, justifyContent: "center" }}>
                 <Text style={{ fontSize: F.sm, color: tokens.foreground }}>Cancel</Text>
               </Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel="Start agent" disabled={!canStart} onPress={() => { void start(); }} testID="start-agent-submit"
+              <Pressable accessibilityRole="button" accessibilityLabel={withAgent ? "Start agent" : "Create workspace"} disabled={!canStart} onPress={() => { void start(); }} testID="start-agent-submit"
                 style={{ height: 34, paddingHorizontal: 16, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: tokens.accent, opacity: canStart ? 1 : 0.45 }}>
-                <Icon name={starting ? "Loader" : "Play"} size={14} color="#ffffff" />
-                <Text style={{ fontSize: F.sm, fontWeight: "700", color: "#ffffff" }}>{starting ? "Starting…" : "Start agent"}</Text>
+                <Icon name={starting ? "Loader" : withAgent ? "Play" : "FolderPlus"} size={14} color="#ffffff" />
+                <Text style={{ fontSize: F.sm, fontWeight: "700", color: "#ffffff" }}>{starting ? "Starting…" : withAgent ? "Start agent" : "Create workspace"}</Text>
               </Pressable>
             </View>
           </View>

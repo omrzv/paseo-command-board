@@ -38,7 +38,8 @@ function dueLabel(due: string, today: string, tomorrow: string): string {
 /** The phone's full-screen column. */
 const FILL = { flex: 1, minHeight: 0, paddingLeft: 12, paddingRight: 4, paddingTop: 4 } as const;
 
-export function TodoColumn(props: { theme: PluginTheme; width: number; visible: boolean; /** The phone: the whole screen, never collapsed. */ fill?: boolean; onShown?(shown: boolean): void; paseo?: PaseoApi; onOpenAgent?(agentId: string): void }) {
+export function TodoColumn(props: { theme: PluginTheme; width: number; visible: boolean; /** The phone: the whole screen, never collapsed. */ fill?: boolean; onShown?(shown: boolean): void; paseo?: PaseoApi; onOpenAgent?(agentId: string): void; onOpenWorkspace?(workspaceId: string): void }) {
+  const [newWorkspace, setNewWorkspace] = useState(false);
   const tokens = taskTokens(props.theme);
   const listNow = useRpc(todosListRpc);
   const addNow = useRpc(todosAddRpc);
@@ -142,6 +143,13 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
         <Text style={{ fontSize: F.base, fontWeight: "600", color: tokens.foreground }}>My tasks</Text>
         <Text style={{ fontSize: F.base, color: tokens.foregroundMuted }}>{openTodos.length}</Text>
         <View style={{ flex: 1 }} />
+        {props.paseo ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="New workspace" testID="new-workspace" onPress={() => setNewWorkspace(true)} hitSlop={4}
+            style={{ height: 26, paddingHorizontal: 8, borderRadius: 6, flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: tokens.card.border }}>
+            <Icon name="FolderPlus" size={13} color={tokens.accentText} />
+            <Text style={{ fontSize: F.sm, fontWeight: "600", color: tokens.foreground }}>Workspace</Text>
+          </Pressable>
+        ) : null}
         {props.fill ? null : (
           <Pressable accessibilityRole="button" accessibilityLabel="Collapse" onPress={() => setCollapsed(true)} hitSlop={4}
             style={{ width: 28, height: 28, borderRadius: 6, alignItems: "center", justifyContent: "center" }}>
@@ -185,6 +193,16 @@ export function TodoColumn(props: { theme: PluginTheme; width: number; visible: 
             onStartAgent={props.paseo ? () => setStarting(todo) : undefined} onOpenAgent={props.onOpenAgent} />
         )) : null}
       </ScrollView>
+      {newWorkspace && props.paseo ? (
+        <StartAgentDialog paseo={props.paseo} theme={props.theme} onClose={() => setNewWorkspace(false)}
+          onStarted={(agentId, workspaceId) => {
+            setNewWorkspace(false);
+            // A new workspace is somewhere to go: open it (its agent's tab when one was started).
+            if (agentId && props.onOpenAgent) props.onOpenAgent(agentId);
+            else if (props.onOpenWorkspace) props.onOpenWorkspace(workspaceId);
+            else setStartedNote("Workspace created");
+          }} />
+      ) : null}
       {starting && props.paseo ? (
         <StartAgentDialog todo={starting} paseo={props.paseo} theme={props.theme} onClose={() => setStarting(null)}
           onStarted={(agentId) => {

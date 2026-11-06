@@ -345,7 +345,7 @@ export function PhoneBoard(props: {
       <ViewSwitch view={view} onChange={setView} theme={theme} />
       <PhoneToday theme={theme} visible={board.visible} />
       {view === "slack" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><SlackColumn theme={theme} width={0} visible={board.visible} fill /></View> : null}
-      {view === "todos" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><TodoColumn theme={theme} width={0} visible={board.visible} fill paseo={board.paseo} onOpenAgent={board.callbacks.onOpen} /></View> : null}
+      {view === "todos" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><TodoColumn theme={theme} width={0} visible={board.visible} fill paseo={board.paseo} onOpenAgent={board.callbacks.onOpen} onOpenWorkspace={board.openWorkspace} /></View> : null}
       {view === "team" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><TeamColumn theme={theme} visible={board.visible} fill /></View> : null}
       {view === "keys" ? <View style={{ flex: 1, minHeight: 0, backgroundColor: palette.panel }}><KeysColumn theme={theme} width={0} visible={board.visible} fill /></View> : null}
       {view !== "board" ? null : <>
