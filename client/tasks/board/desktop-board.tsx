@@ -265,7 +265,10 @@ export function DesktopBoard(props: {
   const floating = open && (narrow || !preference.open);
   const inline = open && !floating;
   // Too narrow to float beside the lanes: the details rise from the bottom instead, and the lanes make room under them.
-  const inSheet = floating && mode === "sheet";
+  // On a computer the details stay a side panel (floating over the lanes when room is short), never a bottom sheet:
+  // the Slack / My tasks / Team / Keys columns leave the lanes narrow, and the sheet covered half the board.
+  const sheetDetails = mode === "sheet" && touch;
+  const inSheet = floating && sheetDetails;
   const tabletFloating = touch && floating && !inSheet;
   useEffect(() => {
     if (!tabletFloating) setFloatingDragWidth(null);
@@ -463,7 +466,7 @@ export function DesktopBoard(props: {
       const now = latest.current;
       if (!now.open) setShown("card");
       if (!now.narrow && now.preferred) return;
-      if (sheetModeRef.current) {
+      if (sheetModeRef.current && touch) {
         // The sheet covers the lanes' lower part: the card's list brings it to the top, above the sheet.
         const location = findCard(now.board.lanes, card.id);
         if (location) setTimeout(() => scrollTo(location.lane, location.index, 0.05), 80);
@@ -668,7 +671,7 @@ export function DesktopBoard(props: {
     [board, theme, callbacks],
   );
   const unfilteredEmpty = tasks.ready && LANE_ORDER.every((id) => tasks.lanes[id].cards.length === 0);
-  const sidebarToggle = useMemo(() => ({ open, onToggle: toggleSidebar, floating, sheet: mode === "sheet" }), [open, toggleSidebar, floating, mode]);
+  const sidebarToggle = useMemo(() => ({ open, onToggle: toggleSidebar, floating, sheet: sheetDetails }), [open, toggleSidebar, floating, sheetDetails]);
   const filterCount = sheetMode ? activeFilterCount(live.params, live.defaults) : 0;
   const sheetFilters = useMemo(() => (sheetMode ? { count: filterCount, onPress: () => setFiltersOpen(true) } : undefined), [sheetMode, filterCount]);
   const openFilterPanel = useCallback(() => {

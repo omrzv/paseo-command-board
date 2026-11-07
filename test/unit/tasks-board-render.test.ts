@@ -1909,7 +1909,8 @@ describe("Tasks board, desktop", () => {
     const button = () => hostsById("sidebar-switch")[0]!;
     const frame = () => StyleSheet.flatten(hostsById("panel-mark")[0]!.props.style);
     const fill = () => StyleSheet.flatten(hostsById("panel-mark-fill")[0]!.props.style);
-    const bottom = width === 600;
+    // This fork: on a computer the details never rise from the bottom, so the mark always shows a side panel.
+    const bottom = false;
     const check = (open: boolean) => {
       expect(frame()).toMatchObject({ width: 16, height: 13, borderWidth: 1.5, borderRadius: 2.5, flexDirection: bottom ? "column" : "row", ...(bottom ? { paddingBottom: 1.5 } : { paddingRight: 1.5 }) });
       expect(fill()).toMatchObject({ width: bottom ? 10 : open ? 3.5 : 1.5, height: bottom ? open ? 3 : 1.5 : 7, borderRadius: 0.75, backgroundColor: open ? "#1b1b1f" : "#6b6b75" });
@@ -2275,58 +2276,17 @@ describe("Tasks board, desktop", () => {
     expect(hostsById("detail-action-bar")).toHaveLength(1);
   });
 
-  it("raises the details from the bottom of a board too narrow to float them, and the lanes make room", () => {
+  it("keeps the details a side panel on a computer even when the board is too narrow to float them (this fork)", () => {
     act(() => {
       renderer = TestRenderer.create(screen(false));
     });
     layOut(600);
-    expect(hostsById("board-sheet")).toHaveLength(0);
-    // The switch's mark shows the panel at the bottom, where the details will rise.
     const switchSide = () => renderer!.root.findByProps({ testID: "sidebar-switch" }).find((node) => node.props.side !== undefined).props.side;
-    expect(switchSide()).toBe("bottom");
+    expect(switchSide()).toBe("right");
     const card = cards().find((node) => node.props.card.id === "sample-running")!;
     act(() => card.props.onSelect(card.props.card));
-    expect(hostsById("board-sheet")).toHaveLength(1);
-    expect(hostsById("sidebar-floating")).toHaveLength(0);
-    expect(textOf(renderer!.root.findByProps({ testID: "detail-title" }))).toBe(card.props.card.title);
-    // A card in the sheet leaves the counts out; each lane's list scrolls its last card above the half sheet (800 x 0.58).
-    expect(hostsById("sidebar-stats")).toHaveLength(0);
-    // A tablet's sheet (680 wide): the header with the first section on the left, the rest on the right, each scrolling.
-    const column = () => renderer!.root.find((node) => typeof node.type === "string" && node.props.testID === "details-sidebar");
-    act(() => column().props.onLayout({ nativeEvent: { layout: { width: 680, height: 464 } } }));
-    expect(hostsById("detail-column-head")).toHaveLength(1);
-    expect(hostsById("detail-column-sections")).toHaveLength(1);
-    expect(hostsById("details-sidebar-scroll")).toHaveLength(0);
-    // A foldable's (580): one column again, scrolling as one.
-    act(() => column().props.onLayout({ nativeEvent: { layout: { width: 580, height: 464 } } }));
-    expect(hostsById("detail-column-head")).toHaveLength(0);
-    expect(hostsById("details-sidebar-scroll")).toHaveLength(1);
-    const list = renderer!.root.findAll((node) => typeof node.props.renderItem === "function" && node.props.contentContainerStyle !== undefined)[0]!;
-    expect(StyleSheet.flatten(list.props.contentContainerStyle).paddingBottom).toBe(8 + 464);
-    // The handle switches to full height and back.
-    const handle = () => renderer!.root.find((node) => (node.type as unknown) === "Pressable" && node.props.testID === "board-sheet-handle");
-    expect(handle().props.accessibilityLabel).toBe("Expand details");
-    act(() => handle().props.onPress());
-    expect(handle().props.accessibilityLabel).toBe("Collapse details");
-    expect(StyleSheet.flatten(list.props.contentContainerStyle).paddingBottom).toBe(8 + 792);
-    // A drag down on the handle takes it back to half, and the click the drag ends with does not switch it again.
-    const strip = handle().parent!.parent!;
-    // The drag counts from where the finger went down (pageY), not from the late grant.
-    act(() => {
-      strip.props.onStartShouldSetPanResponderCapture({ nativeEvent: { pageY: 300 } });
-      strip.props.onPanResponderGrant({ nativeEvent: { pageY: 340 } }, { dy: 0, vy: 0 });
-      strip.props.onPanResponderRelease({ nativeEvent: { pageY: 420 } }, { dy: 80, vy: 0 });
-    });
-    act(() => handle().props.onPress());
-    expect(StyleSheet.flatten(list.props.contentContainerStyle).paddingBottom).toBe(8 + 464);
-    // A tap on the lanes' blank space puts it away.
-    let blank = lanesScroll().parent!;
-    while (!blank.props.onResponderGrant) blank = blank.parent!;
-    act(() => {
-      blank.props.onResponderGrant({ nativeEvent: { pageX: 10, pageY: 10 } });
-      blank.props.onResponderRelease({ nativeEvent: { pageX: 10, pageY: 10 } });
-    });
     expect(hostsById("board-sheet")).toHaveLength(0);
+    expect(hostsById("sidebar-floating")).toHaveLength(1);
   });
 
   it("keeps the blank-tap responder off the lanes' scroll views on touch, and above them on web", () => {
@@ -2397,7 +2357,8 @@ describe("Tasks board, desktop", () => {
     writeSidebarPreference({ open: false, width: 380 });
     act(() => { renderer = TestRenderer.create(screen(false)); });
     layOut(width);
-    const panel = width < 760 ? "board-sheet" : "sidebar-floating";
+    // This fork: a computer never uses the bottom sheet.
+    const panel = "sidebar-floating";
     const card = () => cards().find((node) => node.props.card.id === "sample-running")!;
     expect(hostsById(panel)).toHaveLength(0);
     act(() => card().props.onSelect(card().props.card));
@@ -2793,7 +2754,8 @@ describe("Tasks board, desktop", () => {
       expect(key(" ")).toHaveBeenCalledTimes(1);
       const title = () => textOf(hostsById("detail-title")[0]!);
       expect(title()).toBe(first.title);
-      const panel = width < 760 ? "board-sheet" : width < 1020 || !preferred ? "sidebar-floating" : "sidebar-inline";
+      // This fork: a computer never uses the bottom sheet.
+      const panel = width < 1020 || !preferred ? "sidebar-floating" : "sidebar-inline";
       expect(hostsById(panel)).toHaveLength(1);
       key(" ", true);
       expect(title()).toBe(first.title);
